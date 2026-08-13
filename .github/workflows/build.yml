@@ -15,12 +15,11 @@ jobs:
       - name: Unpack source zip
         run: |
           set -e
-          ZIP=$(ls -1 *.zip | head -n 1)
+          ZIP=$(ls -1 *.zip | sort | tail -n 1)
           echo "Using archive: $ZIP"
           mkdir -p _src
           unzip -q "$ZIP" -d _src
           ROOT=$(dirname "$(find _src -name settings.gradle.kts | head -n 1)")
-          echo "Project root: $ROOT"
           echo "PROJECT_ROOT=$ROOT" >> "$GITHUB_ENV"
 
       - name: Set up Java 17
@@ -35,25 +34,49 @@ jobs:
           gradle-version: '8.9'
 
       - name: Build debug APK
+        id: build
+        continue-on-error: true
         working-directory: ${{ env.PROJECT_ROOT }}
-        run: gradle --no-daemon :app:assembleDebug --stacktrace
+        run: |
+          set -o pipefail
+          gradle --no-daemon :app:assembleDebug --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
+
+      - name: Error summary
+        if: steps.build.outcome == 'failure'
+        run: |
+          echo "================ ERROR SUMMARY ================"
+          grep -nE "^e: |^w: .*error|error:|Unresolved reference|Caused by|What went wrong|FAILURE:|Execution failed for task" build.log \
+            | grep -v "warning" | head -n 60
+          echo "==============================================="
+          {
+            echo "## Error summary"
+            echo '```'
+            grep -nE "^e: |error:|Unresolved reference|Caused by|What went wrong|FAILURE:|Execution failed for task" build.log | head -n 40
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Collect APK
+        if: steps.build.outcome == 'success'
         run: |
           find "$PROJECT_ROOT" -name "*.apk" -exec cp {} ZiziPlayer.apk \;
           ls -lh ZiziPlayer.apk
 
       - name: Upload APK
+        if: steps.build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: ZiziPlayer-APK
           path: ZiziPlayer.apk
           retention-days: 30
 
-      - name: Upload build log on failure
-        if: failure()
+      - name: Upload full log
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: build-logs
-          path: |
-            ${{ env.PROJECT_ROOT }}/app/build/reports/**
+          name: build-log
+          path: build.log
+          retention-days: 30
+
+      - name: Fail if build failed
+        if: steps.build.outcome == 'failure'
+        run: exit 1
