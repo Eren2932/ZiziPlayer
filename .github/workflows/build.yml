@@ -1,82 +1,244 @@
-name: Build APK from ZIP
+name: Build Android APK
 
 on:
-  workflow_dispatch:
   push:
     branches: [ main, master ]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      godot_version:
+        description: "Godot version tag (e.g. 4.4.1-stable). Leave empty to use GODOT_VERSION file."
+        required: false
+        default: ""
 
 jobs:
-  build:
+  build-apk:
     runs-on: ubuntu-latest
+    timeout-minutes: 40
+
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
-      - name: Unpack source zip
+      - name: Unpack project (handles plain, wrapper and nested zips)
         run: |
-          set -e
-          ZIP=$(ls -1 *.zip | sort | tail -n 1)
-          echo "Using archive: $ZIP"
-          mkdir -p _src
-          unzip -q "$ZIP" -d _src
-          ROOT=$(dirname "$(find _src -name settings.gradle.kts | head -n 1)")
-          echo "PROJECT_ROOT=$ROOT" >> "$GITHUB_ENV"
+          set -euo pipefail
 
-      - name: Set up Java 17
-        uses: actions/setup-java@v4
+          if [ -f project.godot ]; then
+            echo "project.godot is already in the repository root - nothing to unpack."
+          else
+            rm -rf _unpack
+            mkdir -p _unpack
+
+            # 1. copy every zip of the repo (root or up to 2 folders deep) into _unpack
+            n=0
+            while IFS= read -r Z; do
+              n=$((n + 1))
+              mkdir -p "_unpack/z$n"
+              echo "unzip -> _unpack/z$n : $Z"
+              unzip -q -o "$Z" -d "_unpack/z$n" || echo "  (skipped: not a readable zip)"
+            done < <(find . -maxdepth 3 -name '*.zip' -not -path './_unpack/*' | sort)
+
+            if [ "$n" -eq 0 ]; then
+              echo "No project.godot and no .zip anywhere in the repository."
+              exit 1
+            fi
+
+            # 2. the repo zip may itself only contain the project zip: expand nested
+            #    archives too (3 passes is plenty for any sane layout)
+            for pass in 1 2 3; do
+              found_nested=0
+              while IFS= read -r NZ; do
+                found_nested=1
+                D="${NZ%.zip}_x"
+                mkdir -p "$D"
+                echo "nested unzip -> $D : $NZ"
+                unzip -q -o "$NZ" -d "$D" || true
+                rm -f "$NZ"
+              done < <(find _unpack -name '*.zip')
+              if [ "$found_nested" -eq 0 ]; then
+                break
+              fi
+            done
+
+            # 3. pick the project with the highest config/version (so an old zip
+            #    left in the repo can never win over the new one)
+            BEST=""
+            BEST_V=""
+            while IFS= read -r P; do
+              V="$(sed -n 's/^config\/version="\(.*\)"$/\1/p' "$P" | head -n1)"
+              [ -z "$V" ] && V="0"
+              echo "candidate: $P (version $V)"
+              if [ -z "$BEST" ] || [ "$(printf '%s\n%s\n' "$BEST_V" "$V" | sort -V | tail -n1)" = "$V" ]; then
+                BEST="$P"
+                BEST_V="$V"
+              fi
+            done < <(find _unpack -name project.godot | sort)
+
+            if [ -z "$BEST" ]; then
+              echo "project.godot was not found inside any archive:"
+              find _unpack -maxdepth 3 | head -n 40
+              exit 1
+            fi
+
+            SRC="$(dirname "$BEST")"
+            echo "Using project $SRC (version $BEST_V)"
+            cp -a "$SRC/." .
+            rm -rf _unpack
+          fi
+
+          ls -1 | head -n 20
+          test -f project.godot
+          test -d scripts
+          test -f export_presets.cfg
+
+      - name: Static checks (custom linters)
+        run: |
+          set -euo pipefail
+          python3 tools/check.py
+          python3 tools/lint.py
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.9'
-
-      - name: Build debug APK
-        id: build
-        continue-on-error: true
-        working-directory: ${{ env.PROJECT_ROOT }}
+      - name: Resolve & download Godot (editor + export templates)
         run: |
-          set -o pipefail
-          gradle --no-daemon :app:assembleDebug --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
+          set -euo pipefail
+          WANTED="${{ github.event.inputs.godot_version }}"
+          if [ -z "$WANTED" ] && [ -f GODOT_VERSION ]; then
+            WANTED="$(tr -d '[:space:]' < GODOT_VERSION)"
+          fi
+          CANDIDATES="$WANTED 4.4.1-stable 4.4-stable 4.3-stable"
+          FOUND=""
+          for V in $CANDIDATES; do
+            [ -z "$V" ] && continue
+            for BASE in \
+              "https://github.com/godotengine/godot-builds/releases/download/${V}" \
+              "https://github.com/godotengine/godot/releases/download/${V}"
+            do
+              echo "::group::try $BASE"
+              if curl -fsSL -o godot.zip "${BASE}/Godot_v${V}_linux.x86_64.zip" \
+                 && curl -fsSL -o templates.tpz "${BASE}/Godot_v${V}_export_templates.tpz"; then
+                echo "Using Godot $V from $BASE"
+                FOUND="$V"
+                echo "::endgroup::"
+                break 2
+              fi
+              rm -f godot.zip templates.tpz
+              echo "::endgroup::"
+            done
+          done
+          if [ -z "$FOUND" ]; then
+            echo "Could not download any Godot build. Edit the GODOT_VERSION file to an existing tag."
+            exit 1
+          fi
+          echo "GODOT_VER=$FOUND" >> "$GITHUB_ENV"
 
-      - name: Error summary
-        if: steps.build.outcome == 'failure'
+          unzip -q godot.zip
+          BIN="$(find . -maxdepth 1 -name 'Godot_v*_linux.x86_64' | head -n1)"
+          chmod +x "$BIN"
+          sudo mv "$BIN" /usr/local/bin/godot
+          godot --version || true
+
+          TPL_DIR="$(echo "$FOUND" | sed 's/-/./')"
+          mkdir -p "$HOME/.local/share/godot/export_templates/$TPL_DIR"
+          unzip -q templates.tpz -d /tmp/tpl
+          mv /tmp/tpl/templates/* "$HOME/.local/share/godot/export_templates/$TPL_DIR/"
+          ls "$HOME/.local/share/godot/export_templates/$TPL_DIR" | head -n 5
+
+      - name: Create debug keystore
         run: |
-          echo "================ ERROR SUMMARY ================"
-          grep -nE "^e: |^w: .*error|error:|Unresolved reference|Caused by|What went wrong|FAILURE:|Execution failed for task" build.log \
-            | grep -v "warning" | head -n 60
-          echo "==============================================="
-          {
-            echo "## Error summary"
-            echo '```'
-            grep -nE "^e: |error:|Unresolved reference|Caused by|What went wrong|FAILURE:|Execution failed for task" build.log | head -n 40
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+          set -euo pipefail
+          keytool -keyalg RSA -genkeypair -alias androiddebugkey \
+            -keypass android -keystore "$HOME/debug.keystore" -storepass android \
+            -dname "CN=Android Debug,O=Android,C=US" -validity 9999 -deststoretype pkcs12
+          echo "GODOT_ANDROID_KEYSTORE_DEBUG_PATH=$HOME/debug.keystore" >> "$GITHUB_ENV"
+          echo "GODOT_ANDROID_KEYSTORE_DEBUG_USER=androiddebugkey" >> "$GITHUB_ENV"
+          echo "GODOT_ANDROID_KEYSTORE_DEBUG_PASSWORD=android" >> "$GITHUB_ENV"
 
-      - name: Collect APK
-        if: steps.build.outcome == 'success'
+      - name: Configure Godot editor settings (Android SDK + keystore)
         run: |
-          find "$PROJECT_ROOT" -name "*.apk" -exec cp {} ZiziPlayer.apk \;
-          ls -lh ZiziPlayer.apk
+          set -euo pipefail
+          SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          echo "Android SDK: $SDK"
+          mkdir -p "$HOME/.config/godot"
+          cat > /tmp/editor_settings.tres <<TRES
+          [gd_resource type="EditorSettings" format=3]
 
-      - name: Upload APK
-        if: steps.build.outcome == 'success'
-        uses: actions/upload-artifact@v4
-        with:
-          name: ZiziPlayer-APK
-          path: ZiziPlayer.apk
-          retention-days: 30
+          [resource]
+          export/android/android_sdk_path = "$SDK"
+          export/android/debug_keystore = "$HOME/debug.keystore"
+          export/android/debug_keystore_user = "androiddebugkey"
+          export/android/debug_keystore_pass = "android"
+          export/android/java_sdk_path = "$JAVA_HOME"
+          TRES
+          sed -i 's/^          //' /tmp/editor_settings.tres
+          for N in 4 4.3 4.4 4.5 4.6 4.7; do
+            cp /tmp/editor_settings.tres "$HOME/.config/godot/editor_settings-$N.tres"
+          done
+          cat "$HOME/.config/godot/editor_settings-4.tres"
 
-      - name: Upload full log
+      - name: Import project resources
+        run: |
+          set -euo pipefail
+          # First run generates .import files / texture caches; it may exit non-zero on warnings.
+          godot --headless --import . || true
+          godot --headless --import .
+          echo "imported files: $(find .godot/imported -type f 2>/dev/null | wc -l)"
+
+      - name: Smoke test (boot the game headless, fail on any script error)
+        run: |
+          set -uo pipefail
+          # v4.0.0 shipped an APK that booted to a flat clear-colour screen: a
+          # duplicated member killed Game.gd at compile time, and nothing in the
+          # pipeline noticed because a broken script is not a broken export.
+          # From now on the build actually RUNS the game before it is packaged.
+          FAIL=0
+          run_scene () {
+            NAME="$1"; SCENE="$2"
+            echo "::group::boot $NAME"
+            if [ -z "$SCENE" ]; then
+              timeout 120 godot --headless --quit-after 240 > "log_$NAME.txt" 2>&1 || true
+            else
+              timeout 120 godot --headless --quit-after 240 "$SCENE" > "log_$NAME.txt" 2>&1 || true
+            fi
+            tail -n 60 "log_$NAME.txt"
+            echo "::endgroup::"
+            if grep -nE "SCRIPT ERROR|Parse Error|Compile Error|Failed to instantiate|Invalid call|Invalid get index|Invalid set index|Cannot call method|Attempt to call|already exists in|Condition \"" "log_$NAME.txt"; then
+              echo "::error::$NAME booted with script errors (see above)"
+              FAIL=1
+            fi
+            if [ ! -s "log_$NAME.txt" ]; then
+              echo "::warning::$NAME produced no log output"
+            fi
+          }
+          run_scene menu ""
+          run_scene game "res://Game.tscn"
+          exit $FAIL
+
+      - name: Upload boot logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: build-log
-          path: build.log
-          retention-days: 30
+          name: boot-logs
+          path: log_*.txt
+          if-no-files-found: warn
 
-      - name: Fail if build failed
-        if: steps.build.outcome == 'failure'
-        run: exit 1
+      - name: Export debug APK
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          godot --headless --export-debug "Android" build/DeadLine.apk \
+            || godot --headless --export-debug "Android" build/DeadLine.apk
+          test -f build/DeadLine.apk
+          ls -lh build
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: DeadLine-debug-apk
+          path: build/*.apk
+          if-no-files-found: error
