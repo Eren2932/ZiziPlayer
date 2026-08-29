@@ -1,244 +1,179 @@
-name: Build Android APK
+name: Build & release ZiziPlayer APK
+
+# Репозиторий устроен как «код лежит в zip-архиве в корне». Поэтому workflow сначала
+# распаковывает самый свежий zip, а потом собирает проект из него. Workflow, лежащий
+# ВНУТРИ zip, GitHub никогда не запускает: он читает только .github/workflows в корне.
 
 on:
-  push:
-    branches: [ main, master ]
-  pull_request:
   workflow_dispatch:
     inputs:
-      godot_version:
-        description: "Godot version tag (e.g. 4.4.1-stable). Leave empty to use GODOT_VERSION file."
+      attach_to_tag:
+        description: 'Прикрепить APK к уже существующему релизу с этим тегом (например v6.11.0). Пусто — просто собрать.'
         required: false
-        default: ""
+        default: ''
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  release:
+    types: [published]
+
+# Без этого softprops/action-gh-release получает 403: у GITHUB_TOKEN по умолчанию
+# может не быть права записи в Releases.
+permissions:
+  contents: write
+
+concurrency:
+  group: zizi-build-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build-apk:
+  build:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v5
+      - uses: actions/checkout@v4
 
-      - name: Unpack project (handles plain, wrapper and nested zips)
+      - name: Unpack source zip
         run: |
           set -euo pipefail
-
-          if [ -f project.godot ]; then
-            echo "project.godot is already in the repository root - nothing to unpack."
-          else
-            rm -rf _unpack
-            mkdir -p _unpack
-
-            # 1. copy every zip of the repo (root or up to 2 folders deep) into _unpack
-            n=0
-            while IFS= read -r Z; do
-              n=$((n + 1))
-              mkdir -p "_unpack/z$n"
-              echo "unzip -> _unpack/z$n : $Z"
-              unzip -q -o "$Z" -d "_unpack/z$n" || echo "  (skipped: not a readable zip)"
-            done < <(find . -maxdepth 3 -name '*.zip' -not -path './_unpack/*' | sort)
-
-            if [ "$n" -eq 0 ]; then
-              echo "No project.godot and no .zip anywhere in the repository."
-              exit 1
-            fi
-
-            # 2. the repo zip may itself only contain the project zip: expand nested
-            #    archives too (3 passes is plenty for any sane layout)
-            for pass in 1 2 3; do
-              found_nested=0
-              while IFS= read -r NZ; do
-                found_nested=1
-                D="${NZ%.zip}_x"
-                mkdir -p "$D"
-                echo "nested unzip -> $D : $NZ"
-                unzip -q -o "$NZ" -d "$D" || true
-                rm -f "$NZ"
-              done < <(find _unpack -name '*.zip')
-              if [ "$found_nested" -eq 0 ]; then
-                break
-              fi
-            done
-
-            # 3. pick the project with the highest config/version (so an old zip
-            #    left in the repo can never win over the new one)
-            BEST=""
-            BEST_V=""
-            while IFS= read -r P; do
-              V="$(sed -n 's/^config\/version="\(.*\)"$/\1/p' "$P" | head -n1)"
-              [ -z "$V" ] && V="0"
-              echo "candidate: $P (version $V)"
-              if [ -z "$BEST" ] || [ "$(printf '%s\n%s\n' "$BEST_V" "$V" | sort -V | tail -n1)" = "$V" ]; then
-                BEST="$P"
-                BEST_V="$V"
-              fi
-            done < <(find _unpack -name project.godot | sort)
-
-            if [ -z "$BEST" ]; then
-              echo "project.godot was not found inside any archive:"
-              find _unpack -maxdepth 3 | head -n 40
-              exit 1
-            fi
-
-            SRC="$(dirname "$BEST")"
-            echo "Using project $SRC (version $BEST_V)"
-            cp -a "$SRC/." .
-            rm -rf _unpack
+          shopt -s nullglob
+          zips=(*.zip)
+          if [ ${#zips[@]} -eq 0 ]; then
+            echo "::error::в корне репозитория нет ни одного .zip — собирать нечего"
+            exit 1
           fi
+          ZIP=$(printf '%s\n' "${zips[@]}" | sort -V | tail -1)
+          echo "::notice::собираю из $ZIP"
+          mkdir -p _src
+          unzip -q "$ZIP" -d _src
+          settings=$(find _src -name settings.gradle.kts | head -1)
+          if [ -z "$settings" ]; then
+            echo "::error::в архиве нет settings.gradle.kts — это не проект Gradle"
+            exit 1
+          fi
+          root=$(dirname "$settings")
+          echo "PROJECT_ROOT=$root" >> "$GITHUB_ENV"
+          version=$(grep -oP 'versionName = "\K[^"]+' "$root/app/build.gradle.kts")
+          code=$(grep -oP 'versionCode = \K[0-9]+' "$root/app/build.gradle.kts")
+          echo "APP_VERSION=$version" >> "$GITHUB_ENV"
+          echo "::notice::версия $version (versionCode $code)"
 
-          ls -1 | head -n 20
-          test -f project.godot
-          test -d scripts
-          test -f export_presets.cfg
-
-      - name: Static checks (custom linters)
-        run: |
-          set -euo pipefail
-          python3 tools/check.py
-          python3 tools/lint.py
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v5
+      - name: JDK 17
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Resolve & download Godot (editor + export templates)
+      - name: Gradle 8.11.1
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+          cache-read-only: false
+
+      # Хранилище ключа едет в секретах как base64: бинарь в секрет иначе не положить.
+      # На теге и на релизе отсутствие ключа — это ошибка, а не предупреждение: debug-APK,
+      # выложенный как релиз, потом не даст установить нормально подписанное обновление.
+      - name: Decode keystore
+        id: keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
         run: |
           set -euo pipefail
-          WANTED="${{ github.event.inputs.godot_version }}"
-          if [ -z "$WANTED" ] && [ -f GODOT_VERSION ]; then
-            WANTED="$(tr -d '[:space:]' < GODOT_VERSION)"
+          if [ -z "${KEYSTORE_B64:-}" ]; then
+            if [ "${{ github.event_name }}" = "release" ] || [[ "${{ github.ref }}" == refs/tags/* ]]; then
+              echo "::error::SIGNING_KEYSTORE_BASE64 не задан, а это релизная сборка — останавливаюсь"
+              exit 1
+            fi
+            echo "::warning::SIGNING_KEYSTORE_BASE64 не задан — APK уйдёт на debug-ключ (только для проверки сборки)"
+            exit 0
           fi
-          CANDIDATES="$WANTED 4.4.1-stable 4.4-stable 4.3-stable"
-          FOUND=""
-          for V in $CANDIDATES; do
-            [ -z "$V" ] && continue
-            for BASE in \
-              "https://github.com/godotengine/godot-builds/releases/download/${V}" \
-              "https://github.com/godotengine/godot/releases/download/${V}"
-            do
-              echo "::group::try $BASE"
-              if curl -fsSL -o godot.zip "${BASE}/Godot_v${V}_linux.x86_64.zip" \
-                 && curl -fsSL -o templates.tpz "${BASE}/Godot_v${V}_export_templates.tpz"; then
-                echo "Using Godot $V from $BASE"
-                FOUND="$V"
-                echo "::endgroup::"
-                break 2
-              fi
-              rm -f godot.zip templates.tpz
-              echo "::endgroup::"
-            done
-          done
-          if [ -z "$FOUND" ]; then
-            echo "Could not download any Godot build. Edit the GODOT_VERSION file to an existing tag."
-            exit 1
+          printf '%s' "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          echo "path=$RUNNER_TEMP/release.jks" >> "$GITHUB_OUTPUT"
+          ls -l "$RUNNER_TEMP/release.jks"
+
+      # continue-on-error здесь нет намеренно: зелёная галочка на провалившейся сборке
+      # хуже отсутствия CI, потому что учит доверять галочке.
+      - name: Assemble release
+        working-directory: ${{ env.PROJECT_ROOT }}
+        env:
+          SIGNING_STORE_FILE: ${{ steps.keystore.outputs.path }}
+          SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
+          SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
+          RESOLVER_URL: ${{ vars.RESOLVER_URL }}
+          RESOLVER_TOKEN: ${{ secrets.RESOLVER_TOKEN }}
+        run: |
+          set -o pipefail
+          gradle --no-daemon :app:assembleRelease --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
+
+      - name: Error summary
+        if: failure()
+        run: |
+          if [ ! -f build.log ]; then exit 0; fi
+          {
+            echo "## Что сломалось"
+            echo '```'
+            grep -nE "^e: |error:|Unresolved reference|Caused by|What went wrong|FAILURE:|Execution failed for task" build.log | head -n 40
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Проверка, а не украшение: apksigner называет владельца сертификата.
+      - name: Verify signature
+        run: |
+          set -euo pipefail
+          apk=$(find "$PROJECT_ROOT/app/build/outputs/apk/release" -name '*.apk' | head -1)
+          signer=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | tail -1)
+          "$signer" verify --print-certs "$apk" | grep -E 'certificate DN|SHA-256' || true
+          if "$signer" verify --print-certs "$apk" | grep -q 'CN=Android Debug'; then
+            if [ "${{ github.event_name }}" = "release" ] || [[ "${{ github.ref }}" == refs/tags/* ]]; then
+              echo "::error::APK подписан debug-ключом — такой релиз выкладывать нельзя"
+              exit 1
+            fi
+            echo "::warning::APK подписан debug-ключом"
+          else
+            echo "::notice::подпись релизная"
           fi
-          echo "GODOT_VER=$FOUND" >> "$GITHUB_ENV"
 
-          unzip -q godot.zip
-          BIN="$(find . -maxdepth 1 -name 'Godot_v*_linux.x86_64' | head -n1)"
-          chmod +x "$BIN"
-          sudo mv "$BIN" /usr/local/bin/godot
-          godot --version || true
-
-          TPL_DIR="$(echo "$FOUND" | sed 's/-/./')"
-          mkdir -p "$HOME/.local/share/godot/export_templates/$TPL_DIR"
-          unzip -q templates.tpz -d /tmp/tpl
-          mv /tmp/tpl/templates/* "$HOME/.local/share/godot/export_templates/$TPL_DIR/"
-          ls "$HOME/.local/share/godot/export_templates/$TPL_DIR" | head -n 5
-
-      - name: Create debug keystore
+      - name: Rename artifact
         run: |
           set -euo pipefail
-          keytool -keyalg RSA -genkeypair -alias androiddebugkey \
-            -keypass android -keystore "$HOME/debug.keystore" -storepass android \
-            -dname "CN=Android Debug,O=Android,C=US" -validity 9999 -deststoretype pkcs12
-          echo "GODOT_ANDROID_KEYSTORE_DEBUG_PATH=$HOME/debug.keystore" >> "$GITHUB_ENV"
-          echo "GODOT_ANDROID_KEYSTORE_DEBUG_USER=androiddebugkey" >> "$GITHUB_ENV"
-          echo "GODOT_ANDROID_KEYSTORE_DEBUG_PASSWORD=android" >> "$GITHUB_ENV"
+          apk=$(find "$PROJECT_ROOT/app/build/outputs/apk/release" -name '*.apk' | head -1)
+          cp "$apk" "ZiziPlayer-v${APP_VERSION}.apk"
+          ls -lh ZiziPlayer-v*.apk
 
-      - name: Configure Godot editor settings (Android SDK + keystore)
-        run: |
-          set -euo pipefail
-          SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
-          echo "Android SDK: $SDK"
-          mkdir -p "$HOME/.config/godot"
-          cat > /tmp/editor_settings.tres <<TRES
-          [gd_resource type="EditorSettings" format=3]
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ZiziPlayer-APK-v${{ env.APP_VERSION }}
+          path: ZiziPlayer-v*.apk
+          if-no-files-found: error
+          retention-days: 90
 
-          [resource]
-          export/android/android_sdk_path = "$SDK"
-          export/android/debug_keystore = "$HOME/debug.keystore"
-          export/android/debug_keystore_user = "androiddebugkey"
-          export/android/debug_keystore_pass = "android"
-          export/android/java_sdk_path = "$JAVA_HOME"
-          TRES
-          sed -i 's/^          //' /tmp/editor_settings.tres
-          for N in 4 4.3 4.4 4.5 4.6 4.7; do
-            cp /tmp/editor_settings.tres "$HOME/.config/godot/editor_settings-$N.tres"
-          done
-          cat "$HOME/.config/godot/editor_settings-4.tres"
-
-      - name: Import project resources
-        run: |
-          set -euo pipefail
-          # First run generates .import files / texture caches; it may exit non-zero on warnings.
-          godot --headless --import . || true
-          godot --headless --import .
-          echo "imported files: $(find .godot/imported -type f 2>/dev/null | wc -l)"
-
-      - name: Smoke test (boot the game headless, fail on any script error)
-        run: |
-          set -uo pipefail
-          # v4.0.0 shipped an APK that booted to a flat clear-colour screen: a
-          # duplicated member killed Game.gd at compile time, and nothing in the
-          # pipeline noticed because a broken script is not a broken export.
-          # From now on the build actually RUNS the game before it is packaged.
-          FAIL=0
-          run_scene () {
-            NAME="$1"; SCENE="$2"
-            echo "::group::boot $NAME"
-            if [ -z "$SCENE" ]; then
-              timeout 120 godot --headless --quit-after 240 > "log_$NAME.txt" 2>&1 || true
-            else
-              timeout 120 godot --headless --quit-after 240 "$SCENE" > "log_$NAME.txt" 2>&1 || true
-            fi
-            tail -n 60 "log_$NAME.txt"
-            echo "::endgroup::"
-            if grep -nE "SCRIPT ERROR|Parse Error|Compile Error|Failed to instantiate|Invalid call|Invalid get index|Invalid set index|Cannot call method|Attempt to call|already exists in|Condition \"" "log_$NAME.txt"; then
-              echo "::error::$NAME booted with script errors (see above)"
-              FAIL=1
-            fi
-            if [ ! -s "log_$NAME.txt" ]; then
-              echo "::warning::$NAME produced no log output"
-            fi
-          }
-          run_scene menu ""
-          run_scene game "res://Game.tscn"
-          exit $FAIL
-
-      - name: Upload boot logs
+      - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: boot-logs
-          path: log_*.txt
-          if-no-files-found: warn
+          name: build-log
+          path: build.log
+          if-no-files-found: ignore
+          retention-days: 30
 
-      - name: Export debug APK
+      # Один шаг на три сценария: push тега, публикация релиза через веб-морду,
+      # и ручной догон уже существующего релиза (attach_to_tag).
+      - name: Determine release tag
+        id: rel
         run: |
-          set -euo pipefail
-          mkdir -p build
-          godot --headless --export-debug "Android" build/DeadLine.apk \
-            || godot --headless --export-debug "Android" build/DeadLine.apk
-          test -f build/DeadLine.apk
-          ls -lh build
+          tag=""
+          case "${{ github.event_name }}" in
+            push)     [[ "${{ github.ref }}" == refs/tags/* ]] && tag="${{ github.ref_name }}" ;;
+            release)  tag="${{ github.event.release.tag_name }}" ;;
+            workflow_dispatch) tag="${{ github.event.inputs.attach_to_tag }}" ;;
+          esac
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          [ -n "$tag" ] && echo "::notice::APK поедет в релиз $tag" || echo "::notice::релиз не трогаю, APK только в артефактах"
 
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
+      - name: Attach APK to release
+        if: steps.rel.outputs.tag != ''
+        uses: softprops/action-gh-release@v2
         with:
-          name: DeadLine-debug-apk
-          path: build/*.apk
-          if-no-files-found: error
+          tag_name: ${{ steps.rel.outputs.tag }}
+          files: ZiziPlayer-v*.apk
+          fail_on_unmatched_files: true
