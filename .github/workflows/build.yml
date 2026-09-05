@@ -41,21 +41,99 @@ jobs:
             echo "::error::в корне репозитория нет ни одного .zip — собирать нечего"
             exit 1
           fi
-          ZIP=$(printf '%s\n' "${zips[@]}" | sort -V | tail -1)
-          echo "::notice::собираю из $ZIP"
-          mkdir -p _src
-          unzip -q "$ZIP" -d _src
-          settings=$(find _src -name settings.gradle.kts | head -1)
-          if [ -z "$settings" ]; then
-            echo "::error::в архиве нет settings.gradle.kts — это не проект Gradle"
+          # 6.37.3: раньше брался просто старший по версии архив, и на этом упала сборка
+          # №336 — в корне лежал ZiziPlayer-v6.37.3-patch.zip (набор изменённых файлов,
+          # без settings.gradle.kts). Теперь архивы перебираются от новых к старым и
+          # берётся первый, который действительно является проектом Gradle. Патч-архив,
+          # оставленный в корне, больше не может утопить сборку — он будет пропущен.
+          ZIP=""
+          root=""
+          for cand in $(printf '%s\n' "${zips[@]}" | sort -Vr); do
+            rm -rf _src
+            mkdir -p _src
+            if ! unzip -q "$cand" -d _src; then
+              echo "::warning::$cand не распаковывается — пропускаю"
+              continue
+            fi
+            settings=$(find _src -name settings.gradle.kts -print -quit || true)
+            if [ -z "$settings" ]; then
+              echo "::warning::$cand — не проект Gradle (нет settings.gradle.kts), пропускаю"
+              continue
+            fi
+            ZIP="$cand"
+            root=$(dirname "$settings")
+            break
+          done
+          if [ -z "$root" ]; then
+            echo "::error::ни один .zip в корне не является проектом Gradle — собирать нечего"
             exit 1
           fi
-          root=$(dirname "$settings")
+          echo "::notice::собираю из $ZIP"
           echo "PROJECT_ROOT=$root" >> "$GITHUB_ENV"
           version=$(grep -oP 'versionName = "\K[^"]+' "$root/app/build.gradle.kts")
           code=$(grep -oP 'versionCode = \K[0-9]+' "$root/app/build.gradle.kts")
           echo "APP_VERSION=$version" >> "$GITHUB_ENV"
           echo "::notice::версия $version (versionCode $code)"
+
+      # 6.24.1: две секунды проверки вместо двух минут сборки. Ровно эти два класса ошибок
+      # уже топили релизы: незакрытый блочный комментарий (6.19.0) и обращение к члену
+      # экземпляра через имя класса (6.19.1). Шаги стоят до Gradle: падать здесь дешевле.
+      - name: Самотест проверок
+        # 6.37.1. Идёт ПЕРВЫМ и валит сборку по-настоящему, в отличие от самих проверок.
+        # Причина в CHANGELOG_v6.37.1.md: проверка молча теряла аргументы и не имела способа
+        # об этом сообщить. Если прибор не воспроизводит свои фикстуры, результатам прогона
+        # по коду верить нельзя, и собирать APK на них - хуже, чем не собрать вовсе.
+        working-directory: ${{ env.PROJECT_ROOT }}
+        run: python3 tools/check_selftest.py
+
+      - name: Синтаксис исходников
+        working-directory: ${{ env.PROJECT_ROOT }}
+        run: python3 tools/check_kotlin_syntax.py app/src
+
+      - name: Импорты
+        # 6.37.1. Проверка существует с 6.19.1 и записана в правило №2 как ОБЯЗАТЕЛЬНАЯ,
+        # но в этом workflow её не вызывали ни разу: три шага из четырёх. Ровно тот случай,
+        # который в проекте называется «написано, но не подключено», - здесь в самом CI.
+        working-directory: ${{ env.PROJECT_ROOT }}
+        run: python3 tools/check_imports.py app/src/main
+
+      - name: Квалифицированные ссылки
+        working-directory: ${{ env.PROJECT_ROOT }}
+        run: python3 tools/check_static_refs.py app/src/main
+
+      # 6.27.2: третья проверка того же сорта. Утопила 6.27.1 хвостовая лямбда, севшая на
+      # modifier вместо onClick, — синтаксис цел, ссылки живые, обе прежние проверки молчали.
+      # Проверка эвристическая и сборку не роняет: она печатает подозрения в лог шага.
+      - name: Аргументы вызовов
+        working-directory: ${{ env.PROJECT_ROOT }}
+        run: python3 tools/check_call_args.py app/src/main
+
+      # 6.37.2: сервер тоже код, и в отличие от Kotlin его здесь можно ЗАПУСТИТЬ.
+      # Проверки Kotlin - эвристики, они говорят «похоже на правду». Эти два шага говорят
+      # «работает»: юнит-тесты границы каталога и тест самой врезки (что защита висит на
+      # роутере, а не на тех роутах, которые не забыли). Валят сборку по-настоящему.
+      - name: Тесты границы каталога
+        working-directory: ${{ env.PROJECT_ROOT }}
+        run: python3 server/tools/test_zizi_guard.py
+
+      - name: Врезка границы в zizi_catalog
+        working-directory: ${{ env.PROJECT_ROOT }}
+        run: python3 server/tools/test_catalog_wiring.py
+
+      - name: Тесты ключа на устройство (zizi_guard 1.8)
+        working-directory: ${{ env.PROJECT_ROOT }}
+        run: python3 server/tools/test_zizi_device.py
+
+      - name: Врезка каталога в резолвер не потеряна
+        working-directory: ${{ env.PROJECT_ROOT }}
+        run: |
+          grep -q 'include_router(catalog_router)' server/zizi_resolver.py \
+            || { echo 'В zizi_resolver.py нет include_router(catalog_router).'; \
+                 echo 'Так 6.37.2 встал с 404 на /catalog/health при зелёном старте.'; exit 1; }
+
+      - name: Синтаксис серверных модулей
+        working-directory: ${{ env.PROJECT_ROOT }}
+        run: python3 server/tools/check_py_syntax.py server
 
       - name: JDK 17
         uses: actions/setup-java@v4
@@ -101,6 +179,10 @@ jobs:
           SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
           RESOLVER_URL: ${{ vars.RESOLVER_URL }}
           RESOLVER_TOKEN: ${{ secrets.RESOLVER_TOKEN }}
+          # 6.24.1: без этой строки BuildConfig.DEV_UNLOCK_HASH пустой и служебный доступ
+          # (6.17.0) в собранном APK физически не работает. Секрета нет — это нормально,
+          # просто в релизе не будет служебных строк; но молча терять функцию нельзя.
+          DEV_UNLOCK_CODE: ${{ secrets.DEV_UNLOCK_CODE }}
         run: |
           set -o pipefail
           gradle --no-daemon :app:assembleRelease --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
