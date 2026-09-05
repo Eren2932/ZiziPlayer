@@ -32,48 +32,73 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Unpack source zip
+      - name: Unpack source zip by versionCode
         run: |
           set -euo pipefail
-          shopt -s nullglob
-          zips=(*.zip)
-          if [ ${#zips[@]} -eq 0 ]; then
-            echo "::error::в корне репозитория нет ни одного .zip — собирать нечего"
-            exit 1
-          fi
-          # 6.37.3: раньше брался просто старший по версии архив, и на этом упала сборка
-          # №336 — в корне лежал ZiziPlayer-v6.37.3-patch.zip (набор изменённых файлов,
-          # без settings.gradle.kts). Теперь архивы перебираются от новых к старым и
-          # берётся первый, который действительно является проектом Gradle. Патч-архив,
-          # оставленный в корне, больше не может утопить сборку — он будет пропущен.
-          ZIP=""
-          root=""
-          for cand in $(printf '%s\n' "${zips[@]}" | sort -Vr); do
-            rm -rf _src
-            mkdir -p _src
-            if ! unzip -q "$cand" -d _src; then
-              echo "::warning::$cand не распаковывается — пропускаю"
-              continue
-            fi
-            settings=$(find _src -name settings.gradle.kts -print -quit || true)
-            if [ -z "$settings" ]; then
-              echo "::warning::$cand — не проект Gradle (нет settings.gradle.kts), пропускаю"
-              continue
-            fi
-            ZIP="$cand"
-            root=$(dirname "$settings")
-            break
-          done
-          if [ -z "$root" ]; then
-            echo "::error::ни один .zip в корне не является проектом Gradle — собирать нечего"
-            exit 1
-          fi
-          echo "::notice::собираю из $ZIP"
-          echo "PROJECT_ROOT=$root" >> "$GITHUB_ENV"
-          version=$(grep -oP 'versionName = "\K[^"]+' "$root/app/build.gradle.kts")
-          code=$(grep -oP 'versionCode = \K[0-9]+' "$root/app/build.gradle.kts")
-          echo "APP_VERSION=$version" >> "$GITHUB_ENV"
-          echo "::notice::версия $version (versionCode $code)"
+          python3 - <<'PY_SOURCE'
+          import hashlib
+          import os
+          from pathlib import Path, PurePosixPath
+          import re
+          import shutil
+          import stat
+          import zipfile
+          
+          candidates = []
+          for path in sorted(Path('.').glob('*.zip')):
+              try:
+                  with zipfile.ZipFile(path) as z:
+                      names = z.namelist()
+                      settings = [n for n in names if PurePosixPath(n).name == 'settings.gradle.kts']
+                      if len(settings) != 1:
+                          print('Skip non-project or ambiguous ZIP:', path.name)
+                          continue
+                      parent = str(PurePosixPath(settings[0]).parent)
+                      prefix = '' if parent == '.' else parent + '/'
+                      gradle = prefix + 'app/build.gradle.kts'
+                      if gradle not in names:
+                          continue
+                      info = z.getinfo(gradle)
+                      if info.file_size > 100000:
+                          raise ValueError('oversized Gradle metadata')
+                      text = z.read(gradle).decode('utf-8')
+                      codes = re.findall(r'^\s*versionCode\s*=\s*([0-9]+)\s*$', text, re.M)
+                      versions = re.findall(r'^\s*versionName\s*=\s*"([A-Za-z0-9._+-]+)"\s*$', text, re.M)
+                      if len(codes) != 1 or len(versions) != 1:
+                          raise ValueError('ambiguous version metadata')
+                      candidates.append((int(codes[0]), path, prefix, versions[0]))
+              except (OSError, ValueError, zipfile.BadZipFile):
+                  raise SystemExit('Invalid source ZIP: ' + path.name)
+          if not candidates:
+              raise SystemExit('No full Gradle project ZIP found')
+          maximum = max(c[0] for c in candidates)
+          winners = [c for c in candidates if c[0] == maximum]
+          if len(winners) != 1:
+              raise SystemExit('Multiple ZIPs with highest versionCode; keep one: ' + ', '.join(c[1].name for c in winners))
+          code, path, prefix, version = winners[0]
+          if any(c in str(path) + prefix for c in '\r\n'):
+              raise SystemExit('Unsafe path')
+          with zipfile.ZipFile(path) as z:
+              entries = z.infolist()
+              if len(entries) > 10000 or sum(x.file_size for x in entries) > 100 * 1024 * 1024:
+                  raise SystemExit('Source archive exceeds extraction limits')
+              if len(set(z.namelist())) != len(entries):
+                  raise SystemExit('Duplicate archive entries')
+              for info in entries:
+                  n = PurePosixPath(info.filename)
+                  mode = info.external_attr >> 16
+                  if (n.is_absolute() or '..' in n.parts or '\\' in info.filename
+                          or any(c in info.filename for c in '\r\n') or stat.S_ISLNK(mode)):
+                      raise SystemExit('Unsafe archive entry')
+              shutil.rmtree('_src', ignore_errors=True)
+              Path('_src').mkdir()
+              z.extractall('_src')
+          root = '_src/' + prefix.rstrip('/') if prefix else '_src'
+          with open(os.environ['GITHUB_ENV'], 'a') as out:
+              out.write('PROJECT_ROOT=' + root + '\nAPP_VERSION=' + version + '\n')
+          print('Selected:', path.name, 'version:', version, 'versionCode:', code)
+          print('SHA256:', hashlib.sha256(path.read_bytes()).hexdigest())
+          PY_SOURCE
 
       # 6.24.1: две секунды проверки вместо двух минут сборки. Ровно эти два класса ошибок
       # уже топили релизы: незакрытый блочный комментарий (6.19.0) и обращение к члену
@@ -135,6 +160,20 @@ jobs:
         working-directory: ${{ env.PROJECT_ROOT }}
         run: python3 server/tools/check_py_syntax.py server
 
+      - name: Stage 2 regression and diagnostic probe tests (offline)
+        working-directory: ${{ env.PROJECT_ROOT }}
+        run: |
+          set -euo pipefail
+          python3 server/tools/test_zizi_extra.py
+          python3 server/tools/test_stage2.py
+          python3 server/tools/test_resolver_stage2.py
+          python3 server/tools/test_stage2_tools.py
+          python3 server/tools/test_probe_contention.py
+          python3 tools/test_ci_source.py
+          python3 server/tools/test_browse.py
+          python3 server/tools/test_browse_deploy.py
+          python3 server/tools/test_probe_browse.py
+
       - name: JDK 17
         uses: actions/setup-java@v4
         with:
@@ -146,6 +185,23 @@ jobs:
         with:
           gradle-version: '8.11.1'
           cache-read-only: false
+
+      - name: Kotlin compile and JVM tests
+        working-directory: ${{ env.PROJECT_ROOT }}
+        run: |
+          set -o pipefail
+          gradle --no-daemon :app:testDebugUnitTest --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/unit-tests.log"
+
+      - name: Upload JVM test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jvm-test-reports
+          path: |
+            unit-tests.log
+            _src/**/app/build/reports/tests/
+            _src/**/app/build/test-results/
+          if-no-files-found: ignore
 
       # Хранилище ключа едет в секретах как base64: бинарь в секрет иначе не положить.
       # На теге и на релизе отсутствие ключа — это ошибка, а не предупреждение: debug-APK,
@@ -204,8 +260,9 @@ jobs:
           set -euo pipefail
           apk=$(find "$PROJECT_ROOT/app/build/outputs/apk/release" -name '*.apk' | head -1)
           signer=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | tail -1)
-          "$signer" verify --print-certs "$apk" | grep -E 'certificate DN|SHA-256' || true
-          if "$signer" verify --print-certs "$apk" | grep -q 'CN=Android Debug'; then
+          "$signer" verify --print-certs "$apk" > "$RUNNER_TEMP/zizi-signature.txt"
+          grep -E 'certificate DN|SHA-256' "$RUNNER_TEMP/zizi-signature.txt" || true
+          if grep -q 'CN=Android Debug' "$RUNNER_TEMP/zizi-signature.txt"; then
             if [ "${{ github.event_name }}" = "release" ] || [[ "${{ github.ref }}" == refs/tags/* ]]; then
               echo "::error::APK подписан debug-ключом — такой релиз выкладывать нельзя"
               exit 1
