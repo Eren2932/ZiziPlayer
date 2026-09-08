@@ -1,0 +1,36 @@
+PASS matte UI has no gradient brush
+PASS mobile surface, chip and text colors
+PASS no server or bootstrap input in settings
+PASS bundled client attached to player on startup
+PASS manual preference not used for bootstrap origin
+PASS audio settings do not replace network client
+PASS settings hub replaces connection form
+PASS single serialized library writer
+PASS atomic replacement plus sync and backup
+PASS unknown schema remains read only
+PASS repeat executes after decoder completion
+PASS queue reorder observable and identity based
+PASS offline uses scoped transport and partial file
+PASS mobile DSP persistence codec
+PASS mobile search geometry
+PASS mobile refresh motion
+PASS authenticated redirects remain disabled
+PASS HTTP opt-in checked by exact origin
+PASS stream bridge uses same scoped policy
+PASS bootstrap comes from build environment
+PASS device key cache wired to auth exchange
+PASS auth backoff remains five minutes
+PASS device 401 recovery bounded to one retry
+PASS upstream hash: src/main/kotlin/app/ziziplayer/playback/dsp/Biquad.kt
+PASS upstream hash: src/main/kotlin/app/ziziplayer/playback/dsp/DspConfig.kt
+PASS upstream hash: src/main/kotlin/app/ziziplayer/playback/dsp/DspEngine.kt
+PASS upstream hash: src/main/kotlin/app/ziziplayer/playback/dsp/DspPresets.kt
+PASS upstream hash: src/main/kotlin/app/ziziplayer/ui/components/ZiziIcons.kt
+PASS upstream hash: src/main/kotlin/app/ziziplayer/ui/SearchPresentation.kt
+PASS upstream hash: src/main/java/app/ziziplayer/ui/theme/ArtworkColorMath.java
+30 static contracts passed. Compilation/runtime tests are separate.
+files with issues: 0
+PASS manifest SHA-256 and safe extraction: 0.3.2-preview
+PASS shared mobile ZIP SHA-256: cd9f3608b68e8ade4d1e148cd5ee3753324f5ac478691523f260a0b9d50a3ef0
+Executed separately: 19 Java artwork math cases (including 4096-color grid), 18 Python browse tests, 9 connection preflight tests, 5 FFmpeg format smoke checks.
+NOT EXECUTED: Kotlin/Compose compilation, 14 new Kotlin JUnit tests, Windows app-image, live VPS, real UI rendering.

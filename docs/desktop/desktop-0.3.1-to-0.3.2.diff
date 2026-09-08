@@ -1,0 +1,2574 @@
+--- 0.3.1/build.gradle.kts
++++ 0.3.2/build.gradle.kts
+@@ -6,7 +6,7 @@
+     id("org.jetbrains.compose") version "1.7.3"
+ }
+ group = "app.ziziplayer.desktop"
+-version = "0.3.1"
++version = "0.3.2"
+ kotlin { jvmToolchain(21) }
+ dependencies {
+     implementation(compose.desktop.currentOs)
+@@ -26,7 +26,7 @@
+         mainClass = "app.ziziplayer.desktop.ui.DesktopMainKt"
+         nativeDistributions {
+             packageName = "ZiziDesktop"
+-            packageVersion = "0.3.1"
++            packageVersion = "0.3.2"
+             includeAllModules = true
+         }
+     }
+--- 0.3.1/src/main/java/app/ziziplayer/ui/theme/ArtworkColorMath.java
++++ 0.3.2/src/main/java/app/ziziplayer/ui/theme/ArtworkColorMath.java
+@@ -0,0 +1,225 @@
++package app.ziziplayer.ui.theme;
++
++/**
++ * Cover colour math without Android/Compose dependencies. Runs once per decoded thumbnail,
++ * never in a draw callback. Keeping this core platform-free also permits real JVM regression
++ * tests without decoding images or starting an emulator.
++ */
++public final class ArtworkColorMath {
++    public static final int SAMPLE_SIDE = 64;
++    public static final int SWATCH_VERSION = 2;
++    private static final int BINS = 24;
++    private static final int BOTTOM = 0xff111111;
++    // Same positions as ZiziPalette.background: 0, .10, .28, .46, .64, .82, 1.
++    private static final float[] RAMP = {1f, .98f, .88f, .65f, .38f, .16f, 0f};
++
++    private ArtworkColorMath() {}
++
++    /** ARGB samples of the visible square crop, at most 64 x 64. Null means no opaque art. */
++    public static int[] extract(int[] pixels) {
++        if (pixels == null || pixels.length == 0) return null;
++        if (pixels.length > SAMPLE_SIDE * SAMPLE_SIDE) {
++            throw new IllegalArgumentException("Artwork sample exceeds 64 x 64");
++        }
++        float[] weight = new float[BINS];
++        float[] xs = new float[BINS];
++        float[] ys = new float[BINS];
++        float[] sats = new float[BINS];
++        float[] vals = new float[BINS];
++        float[] darkW = new float[BINS];
++        float[] darkX = new float[BINS];
++        float[] darkY = new float[BINS];
++        float[] darkS = new float[BINS];
++        float[] darkV = new float[BINS];
++        float[] hsv = new float[3];
++        int opaque = 0;
++        int coloured = 0;
++        float greyValue = 0f;
++        for (int pixel : pixels) {
++            // Transparent padding must not supply a hidden RGB hue.
++            if ((pixel >>> 24) < 192) continue;
++            toHsv(pixel, hsv);
++            opaque++;
++            greyValue += hsv[2];
++            float s = hsv[1];
++            float v = hsv[2];
++            if (s < .12f || v < .08f || (v > .97f && s < .16f)) continue;
++            coloured++;
++            // Near-black regions can have high HSV saturation but little visible colour.
++            // Let lit, colourful areas describe the cover instead of dark compression noise.
++            float w = (.25f + .75f * s) * (.08f + v * v);
++            int bin = Math.min(BINS - 1, (int) (hsv[0] / 360f * BINS));
++            double rad = Math.toRadians(hsv[0]);
++            float x = (float) Math.cos(rad) * w;
++            float y = (float) Math.sin(rad) * w;
++            weight[bin] += w;
++            xs[bin] += x;
++            ys[bin] += y;
++            sats[bin] += s * w;
++            vals[bin] += v * w;
++            if (v < .48f) {
++                darkW[bin] += w;
++                darkX[bin] += x;
++                darkY[bin] += y;
++                darkS[bin] += s * w;
++                darkV[bin] += v * w;
++            }
++        }
++        if (opaque == 0) return null;
++        // Do not let JPEG noise or a tiny coloured logo repaint a monochrome photograph.
++        if (coloured < Math.max(1, (int) Math.ceil(opaque * .025f))) {
++            int grey = fromHsv(0f, 0f, greyValue / opaque);
++            return new int[] {grey, grey, grey};
++        }
++        int best = strongest(weight);
++        float[] primary = merge(best, weight, xs, ys, sats, vals);
++        int second = -1;
++        float score = 0f;
++        for (int i = 0; i < BINS; i++) {
++            if (weight[i] <= 0f) continue;
++            float[] candidate = merge(i, weight, xs, ys, sats, vals);
++            float gap = Math.abs((candidate[0] - primary[0] + 540f) % 360f - 180f);
++            float value = spread(i, weight);
++            if (gap >= 45f && value > score) { second = i; score = value; }
++        }
++        int dark = strongest(darkW);
++        int main = fromHsv(primary[0], primary[1], primary[2]);
++        int secondary = second < 0 ? main : mergedColor(second, weight, xs, ys, sats, vals);
++        int deep = dark < 0 ? fromHsv(primary[0], primary[1], primary[2] * .5f)
++                : mergedColor(dark, darkW, darkX, darkY, darkS, darkV);
++        // No synthetic hue rotation when a cover contains only one actual colour.
++        return new int[] {main, secondary, deep};
++    }
++
++    private static int strongest(float[] weights) {
++        int best = -1;
++        float score = 0f;
++        for (int i = 0; i < BINS; i++) {
++            if (weights[i] > 0f && spread(i, weights) > score) {
++                best = i;
++                score = spread(i, weights);
++            }
++        }
++        return best;
++    }
++
++    private static float spread(int i, float[] values) {
++        return values[(i + BINS - 1) % BINS] + values[i] + values[(i + 1) % BINS];
++    }
++
++    private static float[] merge(int i, float[] w, float[] x, float[] y, float[] s, float[] v) {
++        float weight = spread(i, w);
++        float hue = (float) Math.toDegrees(Math.atan2(spread(i, y), spread(i, x)));
++        if (hue < 0f) hue += 360f;
++        return new float[] {hue, spread(i, s) / weight, spread(i, v) / weight};
++    }
++
++    private static int mergedColor(int i, float[] w, float[] x, float[] y, float[] s, float[] v) {
++        float[] hsv = merge(i, w, x, y, s, v);
++        return fromHsv(hsv[0], hsv[1], hsv[2]);
++    }
++
++    /**
++     * Brightest at the top, neutral near-black at the bottom. Primary hue is NOT averaged
++     * with secondary/deep: that would turn a red-and-blue cover purple, a colour not on it.
++     * Scaling sRGB channels together preserves the source HSV hue/saturation. Luminance is
++     * capped explicitly rather than crushing every hue under the old AMOLED Oklab ceiling.
++     */
++    public static int[] backdrop(int primary) {
++        int top = coverTop(primary);
++        int[] out = new int[RAMP.length];
++        for (int i = 0; i < out.length; i++) out[i] = mix(BOTTOM, top, RAMP[i]);
++        return out;
++    }
++
++    public static int coverTop(int primary) {
++        float[] hsv = new float[3];
++        toHsv(primary, hsv);
++        float value = clamp(hsv[2] * .84f + .06f, .24f, .72f);
++        int candidate = fromHsv(hsv[0], hsv[1], value);
++        // A deep blue can be perceptually darker than neutral #111111 even with a
++        // non-zero HSV value. Give dark artwork a visible floor without shifting hue.
++        if (luminance(candidate) < .020) {
++            float low = value;
++            float high = 1f;
++            for (int i = 0; i < 12; i++) {
++                float mid = (low + high) * .5f;
++                if (luminance(fromHsv(hsv[0], hsv[1], mid)) < .020) low = mid;
++                else high = mid;
++            }
++            value = high;
++            candidate = fromHsv(hsv[0], hsv[1], value);
++        }
++        // #E0E0E0 secondary text clears 4.5:1 even at the brightest stop.
++        if (luminance(candidate) <= .125) return candidate;
++        float low = 0f;
++        float high = value;
++        for (int i = 0; i < 12; i++) {
++            float mid = (low + high) * .5f;
++            if (luminance(fromHsv(hsv[0], hsv[1], mid)) <= .125) low = mid;
++            else high = mid;
++        }
++        return fromHsv(hsv[0], hsv[1], low);
++    }
++
++    /** Opaque, selected-cover-specific card; no orange brand wash or previous-track colour. */
++    public static int cardTop(int primary) { return mix(0xff181818, coverTop(primary), .58f); }
++    public static int surface(int primary) { return mix(0xff121212, coverTop(primary), .16f); }
++    public static int chip(int primary) { return mix(0xff1b1b1b, coverTop(primary), .24f); }
++
++    public static int mix(int from, int to, float fraction) {
++        float t = clamp(fraction, 0f, 1f);
++        int r = Math.round(channel(from, 16) + (channel(to, 16) - channel(from, 16)) * t);
++        int g = Math.round(channel(from, 8) + (channel(to, 8) - channel(from, 8)) * t);
++        int b = Math.round(channel(from, 0) + (channel(to, 0) - channel(from, 0)) * t);
++        return 0xff000000 | (r << 16) | (g << 8) | b;
++    }
++
++    public static double luminance(int rgb) {
++        return .2126 * linear(channel(rgb, 16) / 255.0)
++                + .7152 * linear(channel(rgb, 8) / 255.0)
++                + .0722 * linear(channel(rgb, 0) / 255.0);
++    }
++
++    private static double linear(double v) { return v <= .04045 ? v / 12.92 : Math.pow((v + .055) / 1.055, 2.4); }
++    private static int channel(int rgb, int shift) { return (rgb >>> shift) & 255; }
++    private static float clamp(float v, float low, float high) { return Math.max(low, Math.min(high, v)); }
++
++    private static void toHsv(int rgb, float[] out) {
++        float r = channel(rgb, 16) / 255f;
++        float g = channel(rgb, 8) / 255f;
++        float b = channel(rgb, 0) / 255f;
++        float max = Math.max(r, Math.max(g, b));
++        float min = Math.min(r, Math.min(g, b));
++        float delta = max - min;
++        float hue = 0f;
++        if (delta > 0f) {
++            if (max == r) hue = ((g - b) / delta) % 6f;
++            else if (max == g) hue = (b - r) / delta + 2f;
++            else hue = (r - g) / delta + 4f;
++            hue *= 60f;
++            if (hue < 0f) hue += 360f;
++        }
++        out[0] = hue;
++        out[1] = max == 0f ? 0f : delta / max;
++        out[2] = max;
++    }
++
++    private static int fromHsv(float hue, float saturation, float value) {
++        float h = ((hue % 360f) + 360f) % 360f / 60f;
++        float s = clamp(saturation, 0f, 1f);
++        float v = clamp(value, 0f, 1f);
++        float c = v * s;
++        float x = c * (1f - Math.abs(h % 2f - 1f));
++        float m = v - c;
++        float r = 0f, g = 0f, b = 0f;
++        if (h < 1f) { r = c; g = x; }
++        else if (h < 2f) { r = x; g = c; }
++        else if (h < 3f) { g = c; b = x; }
++        else if (h < 4f) { g = x; b = c; }
++        else if (h < 5f) { r = x; b = c; }
++        else { r = c; b = x; }
++        return 0xff000000 | (Math.round((r + m) * 255f) << 16)
++                | (Math.round((g + m) * 255f) << 8) | Math.round((b + m) * 255f);
++    }
++}
+--- 0.3.1/src/main/kotlin/app/ziziplayer/desktop/DesktopPlayer.kt
++++ 0.3.2/src/main/kotlin/app/ziziplayer/desktop/DesktopPlayer.kt
+@@ -16,7 +16,7 @@
+ 
+ /** Stable identity is never a resolved URL. Remote playback does not add to the library. */
+ data class PlayerTrack(val source: String, val title: String, val artist: String = "", val durationMs: Long? = null,
+-    val artworkUrl: String? = null, val artwork: ByteArray? = null) {
++    val artworkUrl: String? = null, val artwork: ByteArray? = null, val artistId: String? = null) {
+     val id: String get() = source
+     override fun toString(): String = "PlayerTrack(redacted)"
+ }
+@@ -40,11 +40,66 @@
+     val progress: StateFlow<PlayerProgress> = mutableProgress.asStateFlow()
+     private val mutableMetadata = MutableStateFlow<Map<String, PlayerTrack>>(emptyMap())
+     val metadata: StateFlow<Map<String, PlayerTrack>> = mutableMetadata.asStateFlow()
+-    var queue: List<PlayerTrack> = emptyList(); private set
++    private val mutableQueue = MutableStateFlow<List<PlayerTrack>>(emptyList())
++    val queueState: StateFlow<List<PlayerTrack>> = mutableQueue.asStateFlow()
++    var queue: List<PlayerTrack>
++        get() = mutableQueue.value
++        private set(value) { mutableQueue.value = value }
++    var repeatMode = RepeatMode.OFF
++    private val shuffleVisited = mutableSetOf<String>()
++    private val playHistory = mutableListOf<String>()
++    var shuffled = false
++        set(value) {
++            if (field != value) { shuffleVisited.clear(); state.value.track?.id?.let { shuffleVisited.add(it) } }
++            field = value
++        }
++    var onQueueChanged: (() -> Unit)? = null
++    var configForTrack: ((PlayerTrack) -> DspConfig)? = null
++    private var resumePosition = 0L
++    fun restore(tracks: List<PlayerTrack>, selected: String?, position: Long) {
++        if (state.value.phase != PlaybackPhase.IDLE) return
++        queue = tracks.distinctBy { it.id }
++        val track = queue.find { it.id == selected } ?: queue.firstOrNull()
++        resumePosition = position.coerceAtLeast(0)
++        shuffleVisited.clear(); playHistory.clear()
++        track?.id?.let { shuffleVisited.add(it); playHistory.add(it) }
++        mutableState.value = PlayerState(track, message = "Готово к воспроизведению")
++        mutableProgress.value = PlayerProgress(track?.id, 0, resumePosition, track?.durationMs)
++    }
++    fun enqueue(track: PlayerTrack, next: Boolean = false) {
++        if (track.id == state.value.track?.id) return
++        val list = queue.filterNot { it.id == track.id }.toMutableList()
++        val index = list.indexOfFirst { it.id == state.value.track?.id }
++        list.add(if (next && index >= 0) index + 1 else list.size, track)
++        queue = list; onQueueChanged?.invoke()
++    }
++    fun move(id: String, delta: Int) {
++        val list = queue.toMutableList(); val i = list.indexOfFirst { it.id == id }
++        if (i < 0 || i + delta !in list.indices) return
++        list.add(i + delta, list.removeAt(i)); queue = list; onQueueChanged?.invoke()
++    }
++    fun remove(id: String) {
++        val i = queue.indexOfFirst { it.id == id }; if (i < 0) return
++        val current = state.value.track?.id == id
++        queue = queue.filterNot { it.id == id }; onQueueChanged?.invoke()
++        if (current) {
++            val replacement = queue.getOrNull(i) ?: queue.lastOrNull()
++            if (replacement != null) {
++                val paused = desiredPaused
++                play(replacement); if (paused) togglePause()
++            } else {
++                stop()
++                mutableState.value = mutableState.value.copy(track = null)
++                mutableProgress.value = mutableProgress.value.copy(trackId = null, durationMs = null)
++            }
++            onQueueChanged?.invoke()
++        }
++    }
+     var gain = 0.35f; private set
+     var config = DspConfig.NEUTRAL; private set
+     var ffmpeg = System.getenv("FFMPEG_PATH")?.takeIf { it.isNotBlank() } ?: if (System.getProperty("os.name").startsWith("Windows")) "ffmpeg.exe" else "ffmpeg"
+     var client: ZiziClient? = null
++    var localSource: ((String) -> String?)? = null
+     private var generation = 0L
+     private var desiredPaused = false
+     private var handover: Job? = null
+@@ -61,18 +116,42 @@
+     fun dsp(value: DspConfig) { config = value.sanitized(); controls?.config?.set(config) }
+     fun play(track: PlayerTrack, tracks: List<PlayerTrack> = queue) {
+         if (closed) return
+-        queue = if (tracks.any { it.id == track.id }) tracks.toList() else listOf(track)
++        val nextQueue = if (tracks.any { it.id == track.id }) tracks.distinctBy { it.id } else listOf(track)
++        if (nextQueue.map { it.id } != queue.map { it.id }) { shuffleVisited.clear(); playHistory.clear() }
++        queue = nextQueue
++        shuffleVisited.add(track.id)
++        if (playHistory.lastOrNull() != track.id) { playHistory.add(track.id); if (playHistory.size > 1000) playHistory.removeAt(0) }
++        resumePosition = 0
+         launchTrack(mutableMetadata.value[track.id] ?: track, 0, false)
++        onQueueChanged?.invoke()
+     }
+     fun adjacent(delta: Int) {
+-        val i = queue.indexOfFirst { it.id == state.value.track?.id }
+-        queue.getOrNull(if (i < 0) 0 else i + delta)?.let { play(it) }
++        val current = state.value.track?.id
++        val i = queue.indexOfFirst { it.id == current }
++        val next = if (shuffled && delta > 0) {
++            var candidates = queue.filterNot { it.id in shuffleVisited || it.id == current }
++            if (candidates.isEmpty() && repeatMode == RepeatMode.ALL) {
++                shuffleVisited.clear(); current?.let { shuffleVisited.add(it) }
++                candidates = queue.filterNot { it.id == current }
++                if (candidates.isEmpty()) candidates = queue
++            }
++            candidates.randomOrNull()
++        } else if (shuffled && delta < 0 && playHistory.size > 1) {
++            playHistory.removeAt(playHistory.lastIndex)
++            queue.find { it.id == playHistory.lastOrNull() }
++        } else queue.getOrNull(if (i < 0) 0 else i + delta)
++            ?: if (repeatMode == RepeatMode.ALL && queue.isNotEmpty())
++                (if (delta > 0) queue.first() else queue.last()) else null
++        next?.let { play(it) }
+     }
+     fun togglePause() {
+         if (closed) return
+         val s = state.value
+         if (s.phase in setOf(PlaybackPhase.IDLE, PlaybackPhase.ENDED, PlaybackPhase.ERROR)) {
+-            (s.track ?: queue.firstOrNull())?.let { play(it) }; return
++            (s.track ?: queue.firstOrNull())?.let {
++                val offset = resumePosition; resumePosition = 0
++                if (offset > 0) launchTrack(it, offset, false) else play(it)
++            }; return
+         }
+         desiredPaused = !desiredPaused
+         controls?.pause(desiredPaused)
+@@ -96,6 +175,7 @@
+         controls = null; worker = null
+     }
+     private fun launchTrack(original: PlayerTrack, offset: Long, paused: Boolean) {
++        configForTrack?.invoke(original)?.let { dsp(it) }
+         generation++; val ticket = generation
+         desiredPaused = paused
+         ticker?.cancel(); handover?.cancel()
+@@ -112,8 +192,9 @@
+                     var decoder: Decoder? = null
+                     var sink: Sink? = null
+                     try {
++                        val downloaded = localSource?.invoke(original.id)
+                         val remote = original.source.startsWith("zizi://")
+-                        val network = remote || original.source.startsWith("https://") || original.source.startsWith("http://")
++                        val network = downloaded == null && (remote || original.source.startsWith("https://") || original.source.startsWith("http://"))
+                         val input = if (network) {
+                             val target = runInterruptible {
+                                 if (remote) (api ?: error("SERVER_NOT_CONFIGURED")).resolve(original.source)
+@@ -121,13 +202,13 @@
+                             }
+                             ensureActive()
+                             StreamBridge(target).also { bridge = it; currentBridge.set(it) }.input
+-                        } else original.source
++                        } else downloaded ?: original.source
+                         var track = original
+-                        if (track.durationMs == null) {
++                        if (track.durationMs == null || (!network && track.artwork == null)) {
+                             val info = try { runInterruptible { metadataReader(exe, input, !network) } }
+                                 catch (e: CancellationException) { throw e } catch (_: Exception) { null }
+-                            info?.let { track = track.copy(title = if (!network) it.title ?: track.title else track.title,
+-                                artist = if (!network) it.artist ?: track.artist else track.artist, durationMs = it.durationMs, artwork = it.cover ?: track.artwork) }
++                            info?.let { track = track.copy(title = if (!network && !remote) it.title ?: track.title else track.title,
++                                artist = if (!network && !remote) it.artist ?: track.artist else track.artist, durationMs = it.durationMs, artwork = it.cover ?: track.artwork) }
+                         }
+                         ensureActive()
+                         decoder = decoderFactory(exe, input, offset).also { currentDecoder.set(it) }
+@@ -166,7 +247,7 @@
+                                     mutableProgress.value = PlayerProgress(track.id, ticket, end, track.durationMs)
+                                     mutableState.value = mutableState.value.copy(phase = PlaybackPhase.ENDED, message = "Трек завершён")
+                                     val i = queue.indexOfFirst { it.id == track.id }
+-                                    if (i >= 0) queue.getOrNull(i + 1)?.let { play(it) }
++                                    if (i >= 0) { if (repeatMode == RepeatMode.ONE) play(track) else adjacent(1) }
+                                 }
+                             }
+                         }
+@@ -177,12 +258,12 @@
+                                 ticker?.cancel()
+                                 val message = when {
+                                     e is NetworkFailure -> when (e.code) {
+-                                        401 -> "Сервер: проверь токен доступа"
++                                        401 -> "Не удалось подтвердить доступ к каталогу"
+                                         403 -> "Сервер отказал в доступе"
+                                         429 -> "Квота сервера исчерпана. Повтори позже"
+                                         else -> "Сервер ответил HTTP ${e.code}"
+                                     }
+-                                    remoteMissing(original, api) -> "Укажи HTTPS-сервер в настройках"
++                                    remoteMissing(original, api) -> "Каталог недоступен в этой сборке"
+                                     else -> "Не удалось воспроизвести. Проверь источник, сеть, FFmpeg и аудиоустройство"
+                                 }
+                                 mutableState.value = mutableState.value.copy(phase = PlaybackPhase.ERROR, message = message, seekable = false)
+@@ -200,7 +281,7 @@
+     }
+     private fun remoteMissing(track: PlayerTrack, api: ZiziClient?) = track.source.startsWith("zizi://") && api == null
+     fun stop(after: (() -> Unit)? = null) {
+-        generation++; ticker?.cancel(); handover?.cancel(); desiredPaused = false
++        generation++; ticker?.cancel(); handover?.cancel(); desiredPaused = false; resumePosition = 0
+         mutableState.value = state.value.copy(phase = PlaybackPhase.IDLE, generation = generation, message = "Остановлено", seekable = false)
+         mutableProgress.value = PlayerProgress(state.value.track?.id, generation, 0, state.value.track?.durationMs)
+         handover = scope.launch { handoverLock.withLock { releasePrevious() }; after?.invoke() }
+@@ -208,7 +289,7 @@
+     fun close(after: () -> Unit) { closed = true; stop(after) }
+ }
+ 
+-/** Only nonsecret preferences; tokens intentionally live in ZiziClient memory for this preview. */
++/** Nonsecret platform preferences. Build bootstrap/device credentials have separate owners. */
+ object DesktopPreferences {
+     private val prefs = Preferences.userRoot().node("app/ziziplayer/desktop")
+     val installId: String = prefs.get("installId", "").ifBlank { UUID.randomUUID().toString().also { prefs.put("installId", it) } }
+--- 0.3.1/src/main/kotlin/app/ziziplayer/desktop/LibraryStore.kt
++++ 0.3.2/src/main/kotlin/app/ziziplayer/desktop/LibraryStore.kt
+@@ -0,0 +1,130 @@
++package app.ziziplayer.desktop
++
++import app.ziziplayer.playback.dsp.DspCodec
++import app.ziziplayer.playback.dsp.DspConfig
++import org.json.JSONArray
++import org.json.JSONObject
++import java.nio.file.Files
++import java.nio.file.Path
++import java.nio.file.StandardCopyOption
++import java.nio.file.AtomicMoveNotSupportedException
++import java.io.FileOutputStream
++import java.util.UUID
++
++enum class RepeatMode { OFF, ALL, ONE }
++enum class TrackSort { TITLE, ARTIST, RECENT, DURATION }
++data class DesktopSettings(
++    val artworkColor: Boolean = true, val grid: Boolean = true,
++    val sort: TrackSort = TrackSort.TITLE, val volume: Float = .35f,
++    val repeat: RepeatMode = RepeatMode.OFF, val shuffle: Boolean = false,
++    val dspGlobal: Boolean = false, val globalDsp: String = "",
++    val trackDsp: Map<String, String> = emptyMap()
++)
++data class UserPlaylist(val id: String = UUID.randomUUID().toString(), val title: String,
++    val trackIds: List<String> = emptyList())
++data class LibrarySnapshot(
++    val tracks: List<PlayerTrack> = emptyList(), val favorites: Set<String> = emptySet(),
++    val playlists: List<UserPlaylist> = emptyList(), val folders: List<String> = emptyList(),
++    val queue: List<PlayerTrack> = emptyList(), val selected: String? = null, val positionMs: Long = 0,
++    val settings: DesktopSettings = DesktopSettings()
++)
++
++/** One writer owns the file. Temp + fsync + atomic replacement; last good backup survives damage.
++ * Credentials and artwork bytes never enter this file. Unknown schema is NOT silently overwritten.
++ */
++class UnsupportedLibraryVersion : IllegalArgumentException("UNSUPPORTED_LIBRARY_SCHEMA")
++class LibraryStore(val directory: Path = defaultDirectory()) {
++    private val file = directory.resolve("library-v1.json")
++    private val backup = directory.resolve("library-v1.backup.json")
++    var writable = true; private set
++    var recovered = false; private set
++    private fun read(path: Path): LibrarySnapshot {
++        require(Files.size(path) <= 32L * 1024 * 1024)
++        return decode(Files.readString(path))
++    }
++    fun load(): LibrarySnapshot {
++        if (!Files.exists(file)) {
++            if (!Files.exists(backup)) return LibrarySnapshot()
++            try { return read(backup).also { recovered = true } }
++            catch (_: Exception) { writable = false; return LibrarySnapshot() }
++        }
++        try { return read(file) }
++        catch (_: UnsupportedLibraryVersion) { writable = false; return LibrarySnapshot() }
++        catch (_: Exception) {
++            try { return read(backup).also { recovered = true } }
++            catch (_: Exception) { writable = false; return LibrarySnapshot() }
++        }
++    }
++    @Synchronized fun save(snapshot: LibrarySnapshot) {
++        check(writable) { "LIBRARY_READ_ONLY" }
++        Files.createDirectories(directory)
++        val tmp = Files.createTempFile(directory, "library-", ".tmp")
++        try {
++            val bytes = encode(snapshot).toByteArray(Charsets.UTF_8)
++            require(bytes.size <= 32 * 1024 * 1024) { "LIBRARY_TOO_LARGE" }
++            FileOutputStream(tmp.toFile()).use { it.write(bytes); it.fd.sync() }
++            if (Files.exists(file) && !recovered) {
++                // Do not replace a valid backup with a damaged current file.
++                read(file)
++                Files.copy(file, backup, StandardCopyOption.REPLACE_EXISTING)
++            }
++            try { Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE) }
++            catch (_: AtomicMoveNotSupportedException) { Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING) }
++            recovered = false
++        } finally { Files.deleteIfExists(tmp) }
++    }
++    companion object {
++        fun defaultDirectory(): Path {
++            val windows = System.getProperty("os.name").startsWith("Windows")
++            val base = if (windows) System.getenv("LOCALAPPDATA") else System.getenv("XDG_DATA_HOME")
++            return if (!base.isNullOrBlank()) Path.of(base, "ZiziPlayer")
++            else Path.of(System.getProperty("user.home"), if (windows) "AppData/Local/ZiziPlayer" else ".local/share/ZiziPlayer")
++        }
++        private fun strings(a: JSONArray?): List<String> = if (a == null) emptyList()
++            else (0 until a.length()).mapNotNull { a.optString(it).takeIf(String::isNotBlank) }
++        private fun track(t: PlayerTrack) = JSONObject().put("source", t.source).put("title", t.title)
++            .put("artist", t.artist).put("art", t.artworkUrl).put("artistId", t.artistId)
++            .put("duration", if (t.source.startsWith("zizi://")) null else t.durationMs)
++        private fun tracks(a: JSONArray?): List<PlayerTrack> = if (a == null) emptyList() else
++            (0 until a.length()).map { i ->
++                val t = a.getJSONObject(i)
++                PlayerTrack(t.getString("source"), t.getString("title"), t.optString("artist"),
++                    t.optLong("duration").takeIf { it > 0 },
++                    t.optString("art").takeIf { it.isNotBlank() && it != "null" },
++                    artistId = t.optString("artistId").takeIf { it.matches(Regex("[0-9]{1,20}")) })
++            }.distinctBy { it.id }
++        fun encode(s: LibrarySnapshot): String {
++            val v = s.settings
++            val prefs = JSONObject().put("artworkColor", v.artworkColor).put("grid", v.grid)
++                .put("sort", v.sort.name).put("volume", v.volume.toDouble()).put("repeat", v.repeat.name)
++                .put("shuffle", v.shuffle).put("dspGlobal", v.dspGlobal).put("globalDsp", v.globalDsp)
++                .put("trackDsp", JSONObject(v.trackDsp))
++            return JSONObject().put("schema", 1).put("tracks", JSONArray(s.tracks.map(::track)))
++                .put("favorites", JSONArray(s.favorites.toList())).put("folders", JSONArray(s.folders))
++                .put("playlists", JSONArray(s.playlists.map { JSONObject().put("id", it.id).put("title", it.title)
++                    .put("tracks", JSONArray(it.trackIds)) }))
++                .put("queue", JSONArray(s.queue.map(::track))).put("selected", s.selected)
++                .put("positionMs", s.positionMs).put("settings", prefs).toString(2)
++        }
++        fun decode(raw: String): LibrarySnapshot {
++            require(raw.length <= 32 * 1024 * 1024)
++            val j = JSONObject(raw); if (j.getInt("schema") != 1) throw UnsupportedLibraryVersion()
++            val v = j.optJSONObject("settings") ?: JSONObject()
++            val d = v.optJSONObject("trackDsp") ?: JSONObject()
++            val prefs = DesktopSettings(v.optBoolean("artworkColor", true), v.optBoolean("grid", true),
++                runCatching { TrackSort.valueOf(v.optString("sort")) }.getOrDefault(TrackSort.TITLE),
++                v.optDouble("volume", .35).toFloat().let { if (it.isFinite()) it.coerceIn(0f, 1f) else .35f },
++                runCatching { RepeatMode.valueOf(v.optString("repeat")) }.getOrDefault(RepeatMode.OFF),
++                v.optBoolean("shuffle"), v.optBoolean("dspGlobal"), v.optString("globalDsp"),
++                d.keys().asSequence().associateWith { d.getString(it) })
++            val rows = tracks(j.optJSONArray("tracks")); val ids = rows.map { it.id }.toSet()
++            val pl = j.optJSONArray("playlists") ?: JSONArray()
++            return LibrarySnapshot(rows, strings(j.optJSONArray("favorites")).filter { it in ids }.toSet(),
++                (0 until pl.length()).map { val p = pl.getJSONObject(it)
++                    UserPlaylist(p.getString("id"), p.getString("title"), strings(p.optJSONArray("tracks")).filter { it in ids }.distinct())
++                }.distinctBy { it.id }, strings(j.optJSONArray("folders")).distinct(), tracks(j.optJSONArray("queue")),
++                j.optString("selected").takeIf { it.isNotBlank() && it != "null" },
++                j.optLong("positionMs").coerceAtLeast(0), prefs)
++        }
++    }
++}
+--- 0.3.1/src/main/kotlin/app/ziziplayer/desktop/Metadata.kt
++++ 0.3.2/src/main/kotlin/app/ziziplayer/desktop/Metadata.kt
+@@ -25,7 +25,8 @@
+             }
+         } finally { Files.deleteIfExists(output) }
+     }
+-    fun read(ffmpeg: String, input: String, local: Boolean): Info {
++    fun read(ffmpeg: String, input: String, local: Boolean): Info = read(ffmpeg, input, local, true)
++    fun read(ffmpeg: String, input: String, local: Boolean, includeCover: Boolean): Info {
+         val protocols = if (local) "file,crypto" else "http,tcp"
+         val formats = listOf("-format_whitelist", "mov,mp3,flac,ogg,wav,matroska,webm,aac")
+         val data = capture(listOf(probeExe(ffmpeg), "-v", "error", "-protocol_whitelist", protocols) + formats +
+@@ -34,7 +35,7 @@
+         val tags = format.optJSONObject("tags")
+         val seconds = format.optString("duration").toDoubleOrNull()
+         val duration = seconds?.takeIf { it.isFinite() && it > 0 && it < 86400 * 30 }?.let { (it * 1000).toLong() }
+-        val cover = if (local) runCatching {
++        val cover = if (local && includeCover) runCatching {
+             capture(listOf(ffmpeg, "-hide_banner", "-nostdin", "-loglevel", "error", "-protocol_whitelist", "file,crypto",
+                 "-i", input, "-map", "0:v:0", "-frames:v", "1", "-vf", "scale=480:480:force_original_aspect_ratio=decrease",
+                 "-c:v", "png", "-f", "image2pipe", "pipe:1"), 5 * 1024 * 1024)
+--- 0.3.1/src/main/kotlin/app/ziziplayer/desktop/OfflineFiles.kt
++++ 0.3.2/src/main/kotlin/app/ziziplayer/desktop/OfflineFiles.kt
+@@ -0,0 +1,67 @@
++package app.ziziplayer.desktop
++
++import app.ziziplayer.desktop.network.*
++import kotlinx.coroutines.*
++import java.nio.file.Files
++import java.nio.file.Path
++import java.nio.file.StandardCopyOption
++import java.nio.file.AtomicMoveNotSupportedException
++import java.security.MessageDigest
++import java.io.FileOutputStream
++
++/** Only our hashed files can be deleted. Partial downloads never become playable. */
++class OfflineFiles(val directory: Path) {
++    fun path(id: String): Path {
++        val name = MessageDigest.getInstance("SHA-256").digest(id.toByteArray(Charsets.UTF_8))
++            .joinToString("") { "%02x".format(it.toInt() and 255) }
++        return directory.resolve("$name.audio")
++    }
++    fun existing(id: String): String? = path(id).takeIf { Files.isRegularFile(it) && Files.size(it) > 0 }?.toString()
++    fun remove(id: String) { Files.deleteIfExists(path(id)) }
++    fun statistics(): Pair<Int, Long> {
++        if (!Files.isDirectory(directory)) return 0 to 0L
++        var count = 0; var bytes = 0L
++        Files.list(directory).use { files -> files.filter { it.fileName.toString().matches(Regex("[0-9a-f]{64}\\.audio")) }.forEach {
++            if (Files.isRegularFile(it)) { count++; bytes += Files.size(it) }
++        } }
++        return count to bytes
++    }
++    suspend fun download(track: PlayerTrack, api: ZiziClient, ffmpeg: String, progress: (Long, Long?) -> Unit): String = withContext(Dispatchers.IO) {
++        require(track.source.startsWith("zizi://"))
++        Files.createDirectories(directory)
++        val target = api.resolve(track.source)
++        val tmp = Files.createTempFile(directory, ".download-", ".part")
++        try {
++            val connection = HttpTransport.open(target.uri, target.headers(), legacyOrigin = target.legacyOrigin)
++            try {
++                if (connection.responseCode != 200) throw NetworkFailure(connection.responseCode)
++                val expected = connection.contentLengthLong.takeIf { it >= 0 }
++                val cap = 2L * 1024 * 1024 * 1024
++                require(expected == null || expected <= cap)
++                var total = 0L; var lastReport = 0L
++                connection.inputStream.use { input ->
++                    FileOutputStream(tmp.toFile()).use { output ->
++                        val buffer = ByteArray(64 * 1024)
++                        while (true) {
++                            ensureActive()
++                            val n = input.read(buffer); if (n < 0) break
++                            total += n; require(total <= cap)
++                            output.write(buffer, 0, n)
++                            val now = System.currentTimeMillis()
++                            if (now - lastReport >= 250) { progress(total, expected); lastReport = now }
++                        }
++                        output.fd.sync()
++                    }
++                }
++                require(total > 0 && (expected == null || total == expected)) { "INCOMPLETE_DOWNLOAD" }
++                // Reject error documents even if an upstream returned HTTP 200.
++                require(Metadata.read(ffmpeg, tmp.toString(), true, false).durationMs != null) { "INVALID_AUDIO" }
++                ensureActive()
++                try { Files.move(tmp, path(track.id), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING) }
++                catch (_: AtomicMoveNotSupportedException) { Files.move(tmp, path(track.id), StandardCopyOption.REPLACE_EXISTING) }
++                progress(total, total)
++                path(track.id).toString()
++            } finally { connection.disconnect() }
++        } finally { Files.deleteIfExists(tmp) }
++    }
++}
+--- 0.3.1/src/main/kotlin/app/ziziplayer/desktop/network/ZiziClient.kt
++++ 0.3.2/src/main/kotlin/app/ziziplayer/desktop/network/ZiziClient.kt
+@@ -47,7 +47,7 @@
+         connection.connectTimeout = 15_000
+         connection.readTimeout = 15_000
+         connection.requestMethod = method
+-        connection.setRequestProperty("User-Agent", "ZiziDesktop/0.3.1")
++        connection.setRequestProperty("User-Agent", "ZiziDesktop/0.3.2")
+         connection.setRequestProperty("Accept-Encoding", "identity")
+         for ((key, value) in headers) {
+             require(!key.contains('\r') && !key.contains('\n') && !value.contains('\r') && !value.contains('\n'))
+@@ -122,18 +122,45 @@
+             if (bearer.isNotBlank()) put("Authorization", "Bearer $bearer")
+         }
+     }
++    private fun parseTracks(items: org.json.JSONArray): List<PlayerTrack> =
++        (0 until items.length()).mapNotNull { index ->
++            val row = items.getJSONObject(index); val id = row.optString("id")
++            if (!id.matches(Regex("[0-9]{1,20}")) || row.optString("src", "deezer") != "deezer") null
++            else PlayerTrack("zizi://dz/$id", row.optString("title", "Без названия"), row.optString("artist"),
++                artworkUrl = row.optString("art").takeIf { it.isNotBlank() && it != "null" },
++                artistId = row.optString("artist_id").takeIf { it.matches(Regex("[0-9]{1,20}")) })
++        }.distinctBy { it.id }
+     fun search(query: String): List<PlayerTrack> {
+         require(query.isNotBlank() && query.length <= 300)
+-        // Explicit Deezer: never reinterpret another catalog's ID as a Deezer ID.
+-        val items = json("/catalog/search", mapOf("q" to query, "src" to "deezer", "limit" to "30")).getJSONArray("items")
+-        return (0 until items.length()).mapNotNull { index ->
+-            val row = items.getJSONObject(index)
+-            val id = row.optString("id")
+-            if (!id.matches(Regex("[0-9]{1,20}")) || row.optString("src", "deezer") != "deezer") null
+-            else PlayerTrack("zizi://dz/$id", row.optString("title", "Без названия"), row.optString("artist"),
+-                artworkUrl = row.optString("art").takeIf { it.isNotBlank() && it != "null" })
+-            // Catalog duration isn't guaranteed to equal the matched recording. Probe the stream.
+-        }.distinctBy { it.id }
++        return parseTracks(json("/catalog/search", mapOf("q" to query, "src" to "deezer", "limit" to "30")).getJSONArray("items"))
++    }
++    private fun parseCollection(row: JSONObject): CatalogCollection {
++        val id = row.getString("id"); val kind = row.getString("kind")
++        require(id.matches(Regex("[0-9]{1,20}")) && kind in setOf("artist", "album", "playlist"))
++        return CatalogCollection(id, kind, row.optString("title"), row.optString("subtitle"),
++            row.optString("art").takeIf { it.isNotBlank() && it != "null" })
++    }
++    fun browse(query: String, kind: String, offset: Int = 0): CatalogBrowse {
++        require(kind in setOf("artist", "album", "playlist"))
++        require(query.isNotBlank() && query.length <= 300 && offset in 0..10000)
++        val data = json("/catalog/browse", mapOf("q" to query, "kind" to kind, "limit" to "25", "offset" to "$offset"))
++        require(data.getInt("contract") == 1 && data.getString("src") == "deezer")
++        val rows = data.getJSONArray("items")
++        return CatalogBrowse((0 until rows.length()).map { parseCollection(rows.getJSONObject(it)) }
++            .distinctBy { it.key }, nextOffset(data, offset))
++    }
++    private fun nextOffset(data: JSONObject, current: Int): Int? =
++        if (data.isNull("next_offset")) null else data.getInt("next_offset").takeIf { it > current && it <= 10000 }
++    fun collection(collection: CatalogCollection, offset: Int = 0): CatalogPage {
++        require(collection.id.matches(Regex("[0-9]{1,20}")) && collection.kind in setOf("artist", "album", "playlist"))
++        require(offset in 0..10000)
++        val data = json("/catalog/browse/collection", mapOf("id" to collection.id, "kind" to collection.kind,
++            "limit" to "50", "offset" to "$offset"))
++        require(data.getInt("contract") == 1 && data.getString("src") == "deezer")
++        val info = parseCollection(data.getJSONObject("collection"))
++        require(info.key == collection.key)
++        return CatalogPage(info, parseTracks(data.getJSONArray("items")), nextOffset(data, offset),
++            if (data.isNull("total")) null else data.optInt("total").takeIf { it >= 0 })
+     }
+     fun resolve(source: String): StreamTarget {
+         val (provider, id) = RemoteIdentity.parse(source)
+@@ -150,3 +177,11 @@
+     }
+ }
+ class StreamTarget(val uri: URI, val legacyOrigin: URI? = null, val headers: () -> Map<String, String>)
++
++data class CatalogCollection(val id: String, val kind: String, val title: String,
++    val subtitle: String = "", val artworkUrl: String? = null) {
++    val key: String get() = "$kind:$id"
++    fun artworkTrack() = PlayerTrack("collection:$key", title, artworkUrl = artworkUrl)
++}
++data class CatalogBrowse(val items: List<CatalogCollection>, val nextOffset: Int?)
++data class CatalogPage(val collection: CatalogCollection, val tracks: List<PlayerTrack>, val nextOffset: Int?, val total: Int?)
+--- 0.3.1/src/main/kotlin/app/ziziplayer/desktop/ui/ArtworkPalette.kt
++++ 0.3.2/src/main/kotlin/app/ziziplayer/desktop/ui/ArtworkPalette.kt
+@@ -0,0 +1,134 @@
++package app.ziziplayer.desktop.ui
++
++import androidx.compose.animation.core.*
++import androidx.compose.runtime.*
++import androidx.compose.ui.graphics.Color
++import app.ziziplayer.ui.theme.ArtworkColorMath
++import java.awt.image.BufferedImage
++import kotlin.math.*
++
++internal data class MattePalette(val surface: Color = Color(0xFF101010), val card: Color = Color(0xFF101010),
++    val chip: Color = Color(0xFF1B1B1B), val accent: Color = Color.White)
++internal val LocalMatte = staticCompositionLocalOf { MattePalette() }
++
++/** Same visible square and 64x64 sample positions as Android Artwork.sample. */
++internal fun sampleArtwork(image: BufferedImage): Int? {
++    val side = minOf(image.width, image.height)
++    if (side <= 0) return null
++    val n = minOf(side, ArtworkColorMath.SAMPLE_SIDE)
++    val left = (image.width - side) / 2; val top = (image.height - side) / 2
++    val pixels = IntArray(n * n)
++    for (y in 0 until n) for (x in 0 until n) {
++        pixels[y * n + x] = image.getRGB(left + ((x + .5f) * side / n).toInt().coerceAtMost(side - 1),
++            top + ((y + .5f) * side / n).toInt().coerceAtMost(side - 1))
++    }
++    return ArtworkColorMath.extract(pixels)?.get(0)
++}
++internal fun artworkPalette(primary: Int?): MattePalette {
++    if (primary == null) return MattePalette()
++    val lch = Color(primary).toOklch()
++    val accent = if (lch[1] < .012f) oklch(.90f, 0f, 0f)
++        else oklch(.80f, (.055f + lch[1] * .52f).coerceIn(.055f, .170f), lch[2])
++    return MattePalette(Color(ArtworkColorMath.surface(primary)), Color(ArtworkColorMath.cardTop(primary)),
++        Color(ArtworkColorMath.chip(primary)), accent)
++}
++/** One interruptible 380ms owner; no image sampling or gradients in the draw path. */
++@Composable internal fun animatedMatte(target: MattePalette): MattePalette {
++    val progress = remember { Animatable(1f) }
++    var from by remember { mutableStateOf(target) }
++    var to by remember { mutableStateOf(target) }
++    fun visible(): MattePalette = MattePalette(blendOklch(from.surface, to.surface, progress.value),
++        blendOklch(from.card, to.card, progress.value), blendOklch(from.chip, to.chip, progress.value),
++        blendOklch(from.accent, to.accent, progress.value))
++    LaunchedEffect(target) {
++        from = visible(); to = target; progress.snapTo(0f)
++        progress.animateTo(1f, tween(380, easing = FastOutSlowInEasing))
++    }
++    return visible()
++}
++
++// Colour conversion and shorter-hue interpolation ported from mobile 6.39.9 ZiziTheme.kt.
++private fun cbrtf(value: Float): Float = Math.cbrt(value.toDouble()).toFloat()
++
++private fun toLinear(channel: Float): Float =
++    if (channel <= 0.04045f) channel / 12.92f else ((channel + 0.055f) / 1.055f).pow(2.4f)
++
++private fun fromLinear(channel: Float): Float =
++    if (channel <= 0.0031308f) channel * 12.92f else 1.055f * channel.pow(1f / 2.4f) - 0.055f
++
++/** sRGB -> Oklch. Returns [L, C, h(deg)]. */
++private fun Color.toOklch(): FloatArray {
++    val r = toLinear(red)
++    val g = toLinear(green)
++    val b = toLinear(blue)
++    val l = cbrtf(0.4122214708f * r + 0.5363325363f * g + 0.0514459929f * b)
++    val m = cbrtf(0.2119034982f * r + 0.6806995451f * g + 0.1073969566f * b)
++    val s = cbrtf(0.0883024619f * r + 0.2817188376f * g + 0.6299787005f * b)
++    val okL = 0.2104542553f * l + 0.7936177850f * m - 0.0040720468f * s
++    val okA = 1.9779984951f * l - 2.4285922050f * m + 0.4505937099f * s
++    val okB = 0.0259040371f * l + 0.7827717662f * m - 0.8086757660f * s
++    var hue = atan2(okB, okA) * 57.29578f
++    if (hue < 0f) hue += 360f
++    return floatArrayOf(okL, hypot(okA, okB), hue)
++}
++
++/**
++ * Oklch -> sRGB with a gamut walk: if the requested chroma cannot be shown at this lightness,
++ * chroma is given up in 6 % steps. The hue and the lightness are never touched, which is the
++ * whole point - a band getting darker must not drift towards another colour.
++ */
++private fun oklch(lightness: Float, chroma: Float, hueDeg: Float): Color {
++    val okL = lightness.coerceIn(0f, 1f)
++    val rad = hueDeg * 0.017453292f
++    val dirA = cos(rad)
++    val dirB = sin(rad)
++    var c = chroma.coerceAtLeast(0f)
++    var attempt = 0
++    while (true) {
++        val okA = dirA * c
++        val okB = dirB * c
++        val lp = okL + 0.3963377774f * okA + 0.2158037573f * okB
++        val mp = okL - 0.1055613458f * okA - 0.0638541728f * okB
++        val sp = okL - 0.0894841775f * okA - 1.2914855480f * okB
++        val l = lp * lp * lp
++        val m = mp * mp * mp
++        val s = sp * sp * sp
++        val r = 4.0767416621f * l - 3.3077115913f * m + 0.2309699292f * s
++        val g = -1.2684380046f * l + 2.6097574011f * m - 0.3413193965f * s
++        val b = -0.0041960863f * l - 0.7034186147f * m + 1.7076147010f * s
++        val inGamut = r >= -0.001f && r <= 1.001f && g >= -0.001f && g <= 1.001f &&
++            b >= -0.001f && b <= 1.001f
++        if (inGamut || attempt >= 24 || c <= 0.0005f) {
++            return Color(
++                red = fromLinear(r.coerceIn(0f, 1f)).coerceIn(0f, 1f),
++                green = fromLinear(g.coerceIn(0f, 1f)).coerceIn(0f, 1f),
++                blue = fromLinear(b.coerceIn(0f, 1f)).coerceIn(0f, 1f)
++            )
++        }
++        c *= 0.94f
++        attempt++
++    }
++}
++
++private fun blendOklch(from: Color, to: Color, fraction: Float): Color {
++    if (fraction <= 0.001f) return from
++    if (fraction >= 0.999f) return to
++    val a = from.toOklch()
++    val b = to.toOklch()
++    var delta = b[2] - a[2]
++    if (delta > 180f) delta -= 360f
++    if (delta < -180f) delta += 360f
++    // A colourless stop has no meaningful hue: borrow the other one's instead of rotating half
++    // way round the circle to reach it.
++    val hue = when {
++        a[1] < 0.004f -> b[2]
++        b[1] < 0.004f -> a[2]
++        else -> a[2] + delta * fraction
++    }
++    return oklch(
++        a[0] + (b[0] - a[0]) * fraction,
++        a[1] + (b[1] - a[1]) * fraction,
++        hue
++    )
++}
++
+--- 0.3.1/src/main/kotlin/app/ziziplayer/desktop/ui/DesktopMain.kt
++++ 0.3.2/src/main/kotlin/app/ziziplayer/desktop/ui/DesktopMain.kt
+@@ -52,6 +52,11 @@
+ import javax.swing.JFileChooser
+ import javax.swing.filechooser.FileNameExtensionFilter
+ import kotlinx.coroutines.*
++import kotlinx.coroutines.sync.withPermit
++import androidx.compose.ui.window.Dialog
++import androidx.compose.ui.window.DialogProperties
++import androidx.compose.foundation.horizontalScroll
++import androidx.compose.ui.graphics.vector.ImageVector
+ 
+ private val Brand = Color(0xFFF97316)
+ private val Base = Color.Black
+@@ -60,90 +65,69 @@
+ private val Ink = Color(0xFFF6F7F8)
+ private val Muted = Color(0xFF9A9A9A)
+ 
+-private class DesktopUi(val scope: CoroutineScope) {
+-    val player = DesktopPlayer(scope)
+-    var tracks by mutableStateOf<List<PlayerTrack>>(emptyList()); private set
+-    var results by mutableStateOf<List<PlayerTrack>>(emptyList()); private set
+-    var searching by mutableStateOf(false); private set
+-    var searchMessage by mutableStateOf("Поиск по серверному каталогу Deezer · звук через YouTube")
+-    var config by mutableStateOf(DspConfig.NEUTRAL); private set
+-    var gain by mutableStateOf(0.35f); private set
+-    var client by mutableStateOf<ZiziClient?>(null); private set
+-    var connectionMessage by mutableStateOf("Подключение не настроено в сборке"); private set
+-    var httpCompatibility by mutableStateOf(false); private set
+-    var recentSearches by mutableStateOf(DesktopPreferences.recentSearches); private set
+-    var ffmpeg by mutableStateOf(DesktopPreferences.ffmpeg.ifBlank { player.ffmpeg })
+-    private var searchJob: Job? = null
+-    init {
+-        player.ffmpeg = ffmpeg
+-        try {
+-            val connection = BundledConnection.load()
+-            if (connection != null) {
+-                val api = connection.client(DesktopPreferences.installId)
+-                client = api; player.client = api; httpCompatibility = connection.usesHttp
+-                connectionMessage = "Конфигурация загружена · сеть ещё не проверена"
+-                // Warm the device exchange away from Compose. A cold request also waits only on IO.
+-                scope.launch { withContext(Dispatchers.IO) { api.headers() } }
+-            }
+-        } catch (_: Exception) {
+-            connectionMessage = "Ошибка конфигурации сборки · проверь параметры CI"
+-        }
+-    }
+-    fun audioSettings(executable: String) {
+-        ffmpeg = executable.trim().removeSurrounding("\"")
+-        player.ffmpeg = ffmpeg; DesktopPreferences.ffmpeg = ffmpeg
+-    }
+-    fun clearHistory() { recentSearches = emptyList(); DesktopPreferences.recentSearches = emptyList() }
+-    fun cancelSearch() { searchJob?.cancel(); searching = false; results = emptyList() }
+-    fun add(files: List<File>) { tracks = (tracks + files.map { PlayerTrack(it.absolutePath, it.nameWithoutExtension) }).distinctBy { it.id } }
+-    fun addSource(raw: String) {
+-        val source = raw.trim()
+-        if (source.startsWith("zizi://")) RemoteIdentity.parse(source) else HttpTransport.safeUri(source)
+-        val name = if (source.startsWith("zizi://")) "Трек Zizi · ${RemoteIdentity.parse(source).first.uppercase()}" else "Сетевой трек"
+-        tracks = (tracks + PlayerTrack(source, name)).distinctBy { it.id }
+-    }
+-    fun dsp(value: DspConfig) { player.dsp(value); config = player.config }
+-    fun volume(value: Float) { player.volume(value); gain = player.gain }
+-    fun search(query: String) {
+-        searchJob?.cancel(); results = emptyList()
+-        val api = client
+-        if (api == null) { searching = false; searchMessage = connectionMessage; return }
+-        if (query.isBlank()) { searching = false; searchMessage = "Введи название трека или исполнителя"; return }
+-        if (query.trim().length > 300) { searching = false; searchMessage = "Запрос слишком длинный"; return }
+-        recentSearches = (listOf(query.trim()) + recentSearches).distinctBy { it.lowercase(java.util.Locale.ROOT) }.take(20)
+-        DesktopPreferences.recentSearches = recentSearches
+-        searching = true; searchMessage = "Ищем музыку…"
+-        searchJob = scope.launch {
+-            try {
+-                val found = runInterruptible(Dispatchers.IO) { api.search(query.trim()) }
+-                results = found; connectionMessage = "Каталог доступен"; searchMessage = if (found.isEmpty()) "Ничего не найдено" else "${found.size} треков · нажми для воспроизведения"
+-            } catch (e: CancellationException) { throw e }
+-            catch (e: Exception) {
+-                connectionMessage = "Не удалось выполнить запрос"
+-                searchMessage = if (e is NetworkFailure) when (e.code) {
+-                    401 -> "Сервер отклонил авторизацию · проверь конфигурацию релиза"
+-                    429 -> "Слишком много запросов. Повтори позже"
+-                    else -> "Ошибка сервера HTTP ${e.code}"
+-                } else "Не удалось подключиться: проверь адрес, TLS и сеть"
+-            } finally { if (isActive) searching = false }
+-        }
+-    }
+-}
+-
+-private data class CoverData(val image: ImageBitmap)
++private data class CoverData(val image: ImageBitmap, val palette: MattePalette)
+ private object Covers {
++    val gate = kotlinx.coroutines.sync.Semaphore(3)
++    private val directory = LibraryStore.defaultDirectory().resolve("artwork")
+     private val cache = object : LinkedHashMap<String, CoverData>(64, 0.75f, true) {
+         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, CoverData>?): Boolean = size > 64
+     }
++    private val failed = object : LinkedHashMap<String, Long>(128, .75f, true) {
++        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Long>?): Boolean = size > 128
++    }
++    private var writes = 0
++    fun clear() {
++        synchronized(cache) { cache.clear(); failed.clear() }
++        if (java.nio.file.Files.isDirectory(directory)) java.nio.file.Files.list(directory).use { stream ->
++            stream.filter { it.fileName.toString().matches(Regex("[0-9a-f]{64}\\.img")) }
++                .forEach { runCatching { java.nio.file.Files.deleteIfExists(it) } }
++        }
++    }
++    private fun rememberDisk(key: String, bytes: ByteArray) {
++        runCatching {
++            java.nio.file.Files.createDirectories(directory)
++            val target = diskPath(key)
++            val tmp = java.nio.file.Files.createTempFile(directory, "cover-", ".tmp")
++            try {
++                java.nio.file.Files.write(tmp, bytes)
++                java.nio.file.Files.move(tmp, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
++            } finally { java.nio.file.Files.deleteIfExists(tmp) }
++            synchronized(cache) { writes++ }
++            // Bounded disk cache. Decoding/sampling are never done on the UI thread.
++            if (writes % 16 == 0) {
++                val files = java.nio.file.Files.list(directory).use { it.filter { p -> p.fileName.toString().endsWith(".img") }.toList() }
++                var total = files.sumOf { java.nio.file.Files.size(it) }
++                for (path in files.sortedBy { java.nio.file.Files.getLastModifiedTime(it).toMillis() }) {
++                    if (total <= 96L * 1024 * 1024) break
++                    val size = java.nio.file.Files.size(path)
++                    if (java.nio.file.Files.deleteIfExists(path)) total -= size
++                }
++            }
++        }
++    }
++    private fun diskPath(key: String): java.nio.file.Path {
++        val hash = java.security.MessageDigest.getInstance("SHA-256").digest(key.toByteArray(Charsets.UTF_8))
++            .joinToString("") { "%02x".format(it.toInt() and 255) }
++        return directory.resolve("$hash.img")
++    }
+     fun load(track: PlayerTrack, api: ZiziClient?): CoverData? {
+-        if (track.artwork == null && (track.artworkUrl == null || api == null)) return null
+-        val key = track.id + ":" + System.identityHashCode(api) + ":" + System.identityHashCode(track.artwork)
+-        synchronized(cache) { cache[key] }?.let { return it }
+-        return runCatching {
+-            val bytes = track.artwork ?: api!!.artwork(track.artworkUrl!!)
++        val local = !track.source.contains("://") && !track.source.startsWith("collection:")
++        val key = track.id + ":" + track.artworkUrl + if (local) ":" + File(track.source).lastModified() else ""
++        synchronized(cache) {
++            cache[key]?.let { return it }
++            if ((failed[key] ?: 0L) > System.currentTimeMillis() && track.artwork == null) return null
++        }
++        val result = runCatching {
++            val path = diskPath(key)
++            val cached = runCatching { if (java.nio.file.Files.isRegularFile(path) && java.nio.file.Files.size(path) <= 5 * 1024 * 1024)
++                java.nio.file.Files.readAllBytes(path) else null }.getOrNull()
++            val bytes = track.artwork ?: cached ?: if (local) Metadata.read(
++                DesktopPreferences.ffmpeg.ifBlank { System.getenv("FFMPEG_PATH")?.takeIf { it.isNotBlank() } ?:
++                    if (System.getProperty("os.name").startsWith("Windows")) "ffmpeg.exe" else "ffmpeg" },
++                track.source, true).cover else if (track.artworkUrl != null && api != null) api.artwork(track.artworkUrl) else null
++            if (bytes == null) return@runCatching null
+             ImageIO.createImageInputStream(bytes.inputStream()).use { input ->
+-                val readers = ImageIO.getImageReaders(input)
+-                check(readers.hasNext())
++                val readers = ImageIO.getImageReaders(input); check(readers.hasNext())
+                 val reader = readers.next()
+                 try {
+                     reader.input = input
+@@ -153,17 +137,22 @@
+                     val scale = maxOf(w, h) / 480
+                     if (scale > 1) parameters.setSourceSubsampling(scale, scale, 0, 0)
+                     val image = reader.read(0, parameters)
+-                    CoverData(image.toComposeImageBitmap())
+-                        .also { synchronized(cache) { cache[key] = it } }
++                    if (cached == null) rememberDisk(key, bytes)
++                    CoverData(image.toComposeImageBitmap(), artworkPalette(sampleArtwork(image)))
+                 } finally { reader.dispose() }
+             }
+         }.getOrNull()
++        synchronized(cache) {
++            if (result != null) { cache[key] = result; failed.remove(key) }
++            else failed[key] = System.currentTimeMillis() + 60_000
++        }
++        return result
+     }
+ }
+ @Composable private fun coverData(track: PlayerTrack?, api: ZiziClient?): CoverData? {
+     val cover by produceState<CoverData?>(null, track?.id, track?.artwork, api) {
+         value = null
+-        if (track != null) value = withContext(Dispatchers.IO) { Covers.load(track, api) }
++        if (track != null) value = Covers.gate.withPermit { withContext(Dispatchers.IO) { Covers.load(track, api) } }
+     }
+     return cover
+ }
+@@ -185,147 +174,373 @@
+ 
+ fun main() = application {
+     val scope = rememberCoroutineScope()
+-    val ui = remember { DesktopUi(scope) }
+-    var closing by remember { mutableStateOf(false) }
+-    Window(onCloseRequest = { if (!closing) { closing = true; ui.player.close { exitApplication() } } },
+-        title = "ZiziPlayer · Desktop 0.3.1 preview", state = rememberWindowState(width = 1240.dp, height = 820.dp)) {
+-        LaunchedEffect(Unit) { window.minimumSize = java.awt.Dimension(920, 650) }
+-        MaterialTheme(colorScheme = darkColorScheme(primary = Ink, onPrimary = Color.Black, background = Base,
+-            onBackground = Ink, surface = Panel, onSurface = Ink, surfaceVariant = Chip,
+-            onSurfaceVariant = Muted, secondaryContainer = Chip, onSecondaryContainer = Ink,
+-            surfaceTint = Color.Transparent, outline = Color(0xFF303030))) {
+-            Surface(Modifier.fillMaxSize(), color = Base) { DesktopContent(ui, closing) }
+-        }
+-    }
+-}
++    val store = remember { LibraryStore() }
++    val initial by produceState<LibrarySnapshot?>(null) { value = withContext(Dispatchers.IO) { store.load() } }
++    val snapshot = initial
++    if (snapshot != null) {
++        val ui = remember { DesktopUi(scope, store, snapshot) }
++        var closing by remember { mutableStateOf(false) }
++        Window(onCloseRequest = { if (!closing) { closing = true; ui.shutdown(done = { exitApplication() }, failed = { closing = false }) } },
++            title = "ZiziPlayer · Desktop 0.3.2 preview", state = rememberWindowState(width = 1240.dp, height = 820.dp)) {
++            LaunchedEffect(Unit) { window.minimumSize = java.awt.Dimension(960, 680) }
++            val state by ui.player.state.collectAsState()
++            // Retain previous palette while the next cover decodes; obsolete loads cannot publish.
++            val target by produceState(MattePalette(), state.track?.id, state.track?.artwork, state.track?.artworkUrl, ui.ffmpeg, ui.client, ui.prefs.artworkColor) {
++                value = if (!ui.prefs.artworkColor || state.track == null) MattePalette() else
++                    Covers.gate.withPermit { withContext(Dispatchers.IO) { Covers.load(state.track!!, ui.client)?.palette ?: MattePalette() } }
++            }
++            val matte = animatedMatte(target)
++            CompositionLocalProvider(LocalMatte provides matte) {
++                MaterialTheme(colorScheme = darkColorScheme(primary = matte.accent, onPrimary = Color(0xFF0B0B0C), background = Base,
++                    onBackground = Ink, surface = Panel, onSurface = Ink, surfaceVariant = Chip,
++                    onSurfaceVariant = Muted, secondaryContainer = Chip, onSecondaryContainer = Ink,
++                    surfaceTint = Color.Transparent, outline = Color(0xFF303030))) {
++                    Surface(Modifier.fillMaxSize(), color = Base) { DesktopContent(ui, closing) }
++                }
++            }
++        }
++    }
++}
++private data class LibraryCard(val key: String, val title: String, val subtitle: String,
++    val icon: ImageVector, val cover: PlayerTrack? = null)
++
+ @Composable private fun DesktopContent(s: DesktopUi, closing: Boolean) {
+     val state by s.player.state.collectAsState()
+-    val metadata by s.player.metadata.collectAsState()
++    val queue by s.player.queueState.collectAsState()
+     var page by remember { mutableStateOf("Медиатека") }
++    var detail by remember { mutableStateOf<LibraryCard?>(null) }
+     var query by remember { mutableStateOf("") }
+     var submitted by remember { mutableStateOf(false) }
+-    val focusManager = LocalFocusManager.current
+-    fun submitSearch(value: String) {
+-        if (value.isBlank()) return
+-        query = value; submitted = true; focusManager.clearFocus(); s.search(value)
+-    }
+-    var settings by remember { mutableStateOf(false) }
+     var sourceDialog by remember { mutableStateOf(false) }
+     var effects by remember { mutableStateOf(false) }
+     var expanded by remember { mutableStateOf(false) }
+     var editing by remember { mutableStateOf(false) }
++    var playlistDialog by remember { mutableStateOf(false) }
++    val focus = LocalFocusManager.current
++    fun navigate(label: String) {
++        s.cancelSearch(); s.closePage(); page = label; detail = null; query = ""; submitted = false; focus.clearFocus()
++    }
++    fun search(value: String, kind: String = s.searchKind) {
++        if (value.isBlank()) return
++        query = value; submitted = true; focus.clearFocus(); s.search(value, kind)
++    }
++    fun artist(track: PlayerTrack) {
++        if (!track.source.contains("://")) {
++            s.closePage(); page = "Исполнители"; query = ""
++            detail = LibraryCard("artist:${track.artist}", track.artist, "Локальная медиатека", ZiziIcons.Person, track)
++            return
++        }
++        s.closePage(); detail = null; page = "Поиск"
++        if (track.artistId != null) s.open(CatalogCollection(track.artistId, "artist", track.artist))
++        else search(track.artist, "artist") // Name opens explicit choices, never guesses a catalog identity.
++    }
+     Column(Modifier.fillMaxSize().onKeyEvent {
+-        if (!editing && !settings && !sourceDialog && !closing && it.type == KeyEventType.KeyUp && it.key == Key.Spacebar) {
+-            s.player.togglePause(); true
+-        } else false
++        if (!editing && !sourceDialog && !playlistDialog && page != "Настройки" && !closing &&
++            it.type == KeyEventType.KeyUp && it.key == Key.Spacebar) { s.player.togglePause(); true } else false
+     }) {
+         Row(Modifier.weight(1f)) {
+-            Column(Modifier.width(184.dp).fillMaxHeight().background(Panel).padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
++            Column(Modifier.width(190.dp).fillMaxHeight().background(Panel).padding(16.dp)) {
+                 Text("Zizi", style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold)
+-                Text("DESKTOP · 0.3.1 PREVIEW", color = Muted, style = MaterialTheme.typography.labelSmall)
+-                Spacer(Modifier.height(16.dp))
+-                for ((label, icon) in listOf("Медиатека" to ZiziIcons.FolderMusic, "Поиск" to ZiziIcons.Search, "Очередь" to ZiziIcons.Queue)) {
+-                    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+-                        .background(if (page == label) Chip else Color.Transparent)
+-                        .clickable { s.cancelSearch(); page = label; query = ""; submitted = false; focusManager.clearFocus() }
+-                        .padding(horizontal = 12.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+-                        Icon(icon, null, tint = if (page == label) Brand else Muted, modifier = Modifier.size(23.dp))
+-                        Spacer(Modifier.width(12.dp)); Text(label, color = if (page == label) Ink else Muted)
++                Text("ТВОЯ МУЗЫКА", color = Muted, style = MaterialTheme.typography.labelSmall)
++                Spacer(Modifier.height(22.dp))
++                Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(3.dp)) {
++                    for ((label, icon) in listOf("Медиатека" to ZiziIcons.Library, "Поиск" to ZiziIcons.Search,
++                        "Избранное" to ZiziIcons.Heart, "Плейлисты" to ZiziIcons.Queue,
++                        "Папки" to ZiziIcons.Folder, "Исполнители" to ZiziIcons.Person, "Загрузки" to ZiziIcons.DownloadDone, "Очередь" to ZiziIcons.PlayNext)) {
++                        Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(if (page == label) Chip else Color.Transparent)
++                            .clickable { navigate(label) }.padding(horizontal = 10.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
++                            Icon(icon, null, tint = if (page == label) Brand else Muted, modifier = Modifier.size(22.dp))
++                            Spacer(Modifier.width(10.dp)); Text(label, color = if (page == label) Ink else Muted)
++                        }
+                     }
+-                }
+-                HorizontalDivider()
+-                TextButton(onClick = { s.add(chooseFiles()) }, enabled = !closing) { Text("Добавить файлы") }
+-                TextButton(onClick = { sourceDialog = true }) { Text("Открыть ссылку") }
+-                Spacer(Modifier.weight(1f))
+-                Text(s.connectionMessage, color = Muted, style = MaterialTheme.typography.bodySmall)
+-                TextButton(onClick = { settings = true }) { Icon(ZiziIcons.Server, null); Spacer(Modifier.width(8.dp)); Text("Настройки") }
++                    HorizontalDivider(Modifier.padding(vertical = 12.dp), color = Chip)
++                    TextButton(onClick = { s.add(chooseFiles()) }, enabled = !closing) { Text("Добавить файлы") }
++                    TextButton(onClick = { chooseFolder()?.let(s::scanFolder) }, enabled = !s.scanning) { Text("Добавить папку") }
++                    TextButton(onClick = { sourceDialog = true }) { Text("Открыть ссылку") }
++                }
++                TextButton(onClick = { navigate("Настройки") }) {
++                    Icon(ZiziIcons.Tune, null, Modifier.size(22.dp)); Spacer(Modifier.width(10.dp)); Text("Настройки")
++                }
+             }
+             Column(Modifier.weight(1f).fillMaxHeight().background(Base).padding(24.dp)) {
++                if (!s.store.writable) Text("Библиотека доступна только для чтения. Изменения этого сеанса не сохранятся.", color = Brand, modifier = Modifier.padding(bottom = 12.dp))
++                if (s.notice.isNotEmpty()) Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(Chip).padding(10.dp),
++                    verticalAlignment = Alignment.CenterVertically) {
++                    Text(s.notice, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
++                    IconButton(onClick = { s.notice = "" }) { Icon(ZiziIcons.Close, "Закрыть сообщение") }
++                }
++                val detailTitle = detail?.let { card ->
++                    if (card.key.startsWith("pl:")) s.library.playlists.find { it.id == card.key.removePrefix("pl:") }?.title ?: card.title else card.title
++                }
++                val remote = s.openPage
++                if (remote != null) {
++                    Row(verticalAlignment = Alignment.CenterVertically) {
++                        IconButton(onClick = s::closePage) { Icon(ZiziIcons.ArrowBack, "Назад") }
++                        Text(if (remote.collection.kind == "artist") "Исполнитель" else if (remote.collection.kind == "album") "Альбом" else "Плейлист",
++                            color = Muted, modifier = Modifier.weight(1f))
++                        IconButton(onClick = { effects = !effects }) { Icon(ZiziIcons.Equalizer, "Эквалайзер") }
++                    }
++                    LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
++                        item {
++                            CollectionHero(remote.collection.title, remote.collection.subtitle,
++                                remote.collection.artworkTrack(), s, remote.collection.kind == "artist")
++                            Row(verticalAlignment = Alignment.CenterVertically) {
++                                Text("Загружено ${remote.tracks.size}" + (remote.total?.let { " из $it" } ?: ""), color = Muted, modifier = Modifier.weight(1f))
++                                IconButton(onClick = { remote.tracks.shuffled().let { it.firstOrNull()?.let { t -> s.player.play(t, it) } } }, enabled = remote.tracks.isNotEmpty()) { Icon(ZiziIcons.Shuffle, "Перемешать загруженные треки") }
++                                FilledTonalButton(onClick = { remote.tracks.firstOrNull()?.let { s.player.play(it, remote.tracks) } }, enabled = remote.tracks.isNotEmpty()) { Text("Слушать") }
++                            }
++                            TextButton(onClick = { s.playlist(remote.collection.title, remote.tracks); s.notice = "Загруженные треки сохранены отдельным плейлистом." }, enabled = remote.tracks.isNotEmpty()) { Text("Сохранить загруженные треки") }
++                            if (s.pageError.isNotBlank()) Text(s.pageError, color = MaterialTheme.colorScheme.error)
++                            if (s.opening) LinearProgressIndicator(Modifier.fillMaxWidth())
++                        }
++                        items(remote.tracks, key = { it.id }) { track -> TrackRow(s, track, remote.tracks, closing, onArtist = ::artist) }
++                        item {
++                            if (s.pageError.isNotBlank()) TextButton(onClick = { s.open(remote.collection, remote.tracks.isNotEmpty() && remote.nextOffset != null) }) { Text("Повторить") }
++                            if (remote.nextOffset != null) OutlinedButton(onClick = { s.open(remote.collection, true) }, enabled = !s.opening) { Text("Загрузить ещё") }
++                        }
++                    }
++                } else if (page == "Настройки") {
++                    SettingsContent(s) { effects = true }
++                } else {
++                    Row(verticalAlignment = Alignment.CenterVertically) {
++                        if (detail != null) IconButton(onClick = { detail = null; query = "" }) { Icon(ZiziIcons.ArrowBack, "Назад") }
++                        Text(detailTitle ?: page, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
++                        if (page in listOf("Плейлисты", "Медиатека")) IconButton(onClick = { playlistDialog = true }) { Icon(ZiziIcons.Plus, "Создать плейлист") }
++                        IconButton(onClick = { effects = !effects }) { Icon(ZiziIcons.Equalizer, "Эквалайзер", tint = if (effects) Brand else Ink) }
++                    }
++                    Spacer(Modifier.height(16.dp))
++                    DesktopSearchField(query, { query = it; if (page == "Поиск") { submitted = false; s.cancelSearch() } },
++                        onSubmit = { if (page == "Поиск") search(query) else focus.clearFocus() }, onFocus = { editing = it },
++                        hint = if (page == "Поиск") "Что хочешь послушать?" else "Найти в списке", mobileSearch = page == "Поиск")
++                    Spacer(Modifier.height(12.dp))
++                    if (page == "Поиск") {
++                        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
++                            for ((kind, label) in listOf("track" to "Треки", "artist" to "Исполнители", "album" to "Альбомы", "playlist" to "Плейлисты"))
++                                FilterChip(selected = s.searchKind == kind, onClick = { if (query.isNotBlank()) search(query, kind) else s.selectSearchKind(kind) }, label = { Text(label) })
++                        }
++                        Row(verticalAlignment = Alignment.CenterVertically) {
++                            Text(if (submitted) s.searchMessage else "Поиск музыки", color = Muted, modifier = Modifier.weight(1f))
++                            SearchRefresh(s.searching, query.isNotBlank()) { search(query) }
++                        }
++                        if (!submitted) {
++                            val suggestions = if (query.isBlank()) s.recentSearches.take(8) else app.ziziplayer.ui.SearchPresentation.completions(query, emptyList(), s.recentSearches, s.tracks.map { it.title })
++                            LazyColumn(Modifier.weight(1f)) {
++                                item { if (query.isBlank() && suggestions.isNotEmpty()) Row(verticalAlignment = Alignment.CenterVertically) {
++                                    Text("Недавние", Modifier.weight(1f)); TextButton(onClick = s::clearHistory) { Text("Очистить") }
++                                } }
++                                items(suggestions) { text -> Row(Modifier.fillMaxWidth().clickable { search(text) }.padding(16.dp)) {
++                                    Icon(ZiziIcons.History, null, tint = Muted); Spacer(Modifier.width(16.dp)); Text(text)
++                                } }
++                            }
++                        } else if (s.searchKind != "track") {
++                            val cards = s.groups.map { LibraryCard(it.key, it.title, it.subtitle,
++                                if (it.kind == "artist") ZiziIcons.Person else ZiziIcons.Queue, it.artworkTrack()) }
++                            CollectionCards(cards, s, Modifier.weight(1f)) { card -> s.groups.find { it.key == card.key }?.let { s.open(it) } }
++                            if (s.nextBrowse != null) TextButton(onClick = s::moreSearch, enabled = !s.searching) { Text("Загрузить ещё") }
++                        } else {
++                            LazyColumn(Modifier.weight(1f)) { items(s.results, key = { it.id }) { track -> TrackRow(s, track, s.results, closing, onArtist = ::artist) } }
++                        }
++                    } else {
++                        val localArtists = s.tracks.filter { !it.source.contains("://") && it.artist.isNotBlank() }.groupBy { it.artist }
++                        val cards = when (page) {
++                            "Медиатека" -> listOf(LibraryCard("tracks", "Все треки", "${s.tracks.size} треков", ZiziIcons.Library, s.tracks.firstOrNull()),
++                                LibraryCard("favorites", "Избранное", "${s.library.favorites.size} треков", ZiziIcons.HeartFilled,
++                                    s.tracks.find { it.id in s.library.favorites })) +
++                                s.library.playlists.map { LibraryCard("pl:" + it.id, it.title, "${it.trackIds.size} треков", ZiziIcons.Queue, s.playlistTracks(it.id).firstOrNull()) } +
++                                s.library.folders.map { LibraryCard("dir:$it", File(it).name, "${s.folderTracks(it).size} треков", ZiziIcons.Folder, s.folderTracks(it).firstOrNull()) }
++                            "Плейлисты" -> s.library.playlists.map { LibraryCard("pl:" + it.id, it.title, "${it.trackIds.size} треков", ZiziIcons.Queue, s.playlistTracks(it.id).firstOrNull()) }
++                            "Папки" -> s.library.folders.map { LibraryCard("dir:$it", File(it).name, "${s.folderTracks(it).size} треков", ZiziIcons.Folder, s.folderTracks(it).firstOrNull()) }
++                            "Исполнители" -> localArtists.map { (name, tracks) -> LibraryCard("artist:$name", name, "${tracks.size} локальных треков", ZiziIcons.Person, tracks.firstOrNull()) }
++                            else -> emptyList()
++                        }
++                        if (detail == null && page in listOf("Медиатека", "Плейлисты", "Папки", "Исполнители")) {
++                            Row(verticalAlignment = Alignment.CenterVertically) {
++                                Text(if (s.scanning) "Читаем медиатеку…" else "${cards.size} коллекций", color = Muted, modifier = Modifier.weight(1f))
++                                IconButton(onClick = { s.settings(s.prefs.copy(grid = !s.prefs.grid)) }) { Icon(if (s.prefs.grid) ZiziIcons.ViewList else ZiziIcons.ViewGrid, "Сменить вид") }
++                                if (page == "Исполнители") TextButton(onClick = { navigate("Поиск"); s.selectSearchKind("artist") }) { Text("Найти в каталоге") }
++                            }
++                            if (cards.isEmpty()) Text("Добавь музыку или создай свою коллекцию.", color = Muted, modifier = Modifier.padding(vertical = 24.dp))
++                            CollectionCards(cards.filter { it.title.contains(query, true) }, s, Modifier.weight(1f)) { detail = it; query = "" }
++                        } else {
++                            val key = detail?.key.orEmpty()
++                            val playlistId = key.takeIf { it.startsWith("pl:") }?.removePrefix("pl:")
++                            val all = when {
++                                page == "Очередь" -> queue
++                                page == "Загрузки" -> s.sorted(s.tracks.filter { it.id in s.downloaded })
++                                key.startsWith("pl:") -> s.playlistTracks(key.removePrefix("pl:"))
++                                key.startsWith("dir:") -> s.sorted(s.folderTracks(key.removePrefix("dir:")))
++                                key.startsWith("artist:") -> s.sorted(localArtists[key.removePrefix("artist:")].orEmpty())
++                                key == "favorites" || page == "Избранное" -> s.sorted(s.tracks.filter { it.id in s.library.favorites })
++                                else -> s.sorted(s.tracks)
++                            }
++                            val visible = all.filter { (it.title + " " + it.artist).contains(query, true) }
++                            LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
++                                item {
++                                    if (detail != null) CollectionHero(detailTitle.orEmpty(), "${all.size} треков", all.firstOrNull(), s, false)
++                                    Row(verticalAlignment = Alignment.CenterVertically) {
++                                        Text("${all.size} треков", Modifier.weight(1f), color = Muted)
++                                        if (playlistId != null) PlaylistControls(s, playlistId) { detail = null }
++                                        IconButton(onClick = { all.shuffled().let { list -> list.firstOrNull()?.let { s.player.play(it, list) } } }, enabled = all.isNotEmpty()) { Icon(ZiziIcons.Shuffle, "Перемешать") }
++                                        FilledTonalButton(onClick = { all.firstOrNull()?.let { s.player.play(it, all) } }, enabled = all.isNotEmpty()) { Text("Слушать") }
++                                    }
++                                    if (all.isEmpty()) Text("Здесь пока нет треков.", color = Muted, modifier = Modifier.padding(vertical = 30.dp))
++                                }
++                                items(visible, key = { it.id }) { track -> TrackRow(s, track, all, closing, page == "Очередь", playlistId, ::artist) }
++                            }
++                        }
++                    }
++                }
++            }
++            AnimatedVisibility(effects, enter = expandHorizontally(tween(260)) + fadeIn(tween(180)),
++                exit = shrinkHorizontally(tween(220)) + fadeOut(tween(140))) {
++                EffectsPanel(s, Modifier.width(280.dp).fillMaxHeight().background(Panel).padding(18.dp))
++            }
++        }
++        Transport(s, closing) { expanded = true }
++    }
++    if (sourceDialog) SourceDialog(s) { sourceDialog = false }
++    if (playlistDialog) NameDialog("Новый плейлист", "", { s.playlist(it); playlistDialog = false }) { playlistDialog = false }
++    if (expanded) Dialog(onDismissRequest = { expanded = false }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
++        Surface(Modifier.widthIn(max = 780.dp).fillMaxWidth().padding(24.dp), shape = RoundedCornerShape(24.dp), color = LocalMatte.current.card) {
++            Column(Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                 Row(verticalAlignment = Alignment.CenterVertically) {
+-                    Text(page, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+-                    IconButton(onClick = { effects = !effects }) { Icon(ZiziIcons.Equalizer, "Звук Zizi", tint = if (effects) Brand else Color.White) }
+-                }
+-                Spacer(Modifier.height(16.dp))
+-                if (page == "Поиск") {
+-                    DesktopSearchField(query, { query = it; submitted = false; s.cancelSearch() },
+-                        onSubmit = { submitSearch(query) }, onFocus = { editing = it })
+-                } else {
+-                    DesktopSearchField(query, { query = it }, onSubmit = { focusManager.clearFocus() },
+-                        onFocus = { editing = it }, hint = "Найти в списке", mobileSearch = false)
+-                }
+-                Spacer(Modifier.height(16.dp))
+-                val all = when (page) { "Поиск" -> if (submitted) s.results else emptyList(); "Очередь" -> s.player.queue; else -> s.tracks }
+-                val visible = if (page == "Поиск") all else all.filter { (it.title + " " + it.artist).contains(query, true) }
+-                Row(verticalAlignment = Alignment.CenterVertically) {
+-                    Text(if (page == "Поиск") {
+-                        if (submitted) s.searchMessage else if (query.isBlank()) "Поиск музыки" else "Нажми Enter для поиска"
+-                    } else "${all.size} треков · список этой сессии", color = Muted,
+-                        style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+-                    if (page == "Поиск") SearchRefresh(s.searching, query.isNotBlank()) { submitSearch(query) }
+-                }
+-                if (page == "Поиск" && !submitted) {
+-                    val suggestions = if (query.isBlank()) s.recentSearches.take(6) else
+-                        app.ziziplayer.ui.SearchPresentation.completions(query, emptyList(), s.recentSearches,
+-                            s.tracks.map { it.title })
+-                    if (suggestions.isNotEmpty()) {
+-                        Spacer(Modifier.height(17.dp))
+-                        Row(verticalAlignment = Alignment.CenterVertically) {
+-                            Text(if (query.isBlank()) "Недавние" else "Из истории и медиатеки", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+-                            if (query.isBlank()) TextButton(onClick = s::clearHistory) { Text("Очистить", color = Muted) }
+-                        }
+-                        suggestions.forEach { suggestion ->
+-                            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(4.dp)).clickable { submitSearch(suggestion) }
+-                                .padding(vertical = 14.dp, horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+-                                Icon(ZiziIcons.Search, null, tint = Muted, modifier = Modifier.size(22.dp))
+-                                Spacer(Modifier.width(17.dp)); Text(suggestion, maxLines = 1, overflow = TextOverflow.Ellipsis)
++                    Text("Сейчас играет", Modifier.weight(1f), color = Ink)
++                    IconButton(onClick = { expanded = false }) { Icon(ZiziIcons.Close, "Свернуть") }
++                }
++                Artwork(state.track, s.client, 300.dp); Spacer(Modifier.height(20.dp))
++                Text(state.track?.title ?: "Музыка не выбрана", style = MaterialTheme.typography.headlineSmall, maxLines = 2)
++                TextButton(onClick = { state.track?.let(::artist); expanded = false }, enabled = !state.track?.artist.isNullOrBlank()) { Text(state.track?.artist.orEmpty()) }
++                Transport(s, closing) { expanded = false }
++            }
++        }
++    }
++}
++
++private fun chooseFolder(): File? {
++    val picker = JFileChooser().apply { dialogTitle = "Выбрать папку с музыкой"; fileSelectionMode = JFileChooser.DIRECTORIES_ONLY }
++    return if (picker.showOpenDialog(null) == JFileChooser.APPROVE_OPTION) picker.selectedFile else null
++}
++@Composable private fun CollectionHero(title: String, subtitle: String, track: PlayerTrack?, s: DesktopUi, artist: Boolean) {
++    val cover = coverData(track, s.client)
++    Column(Modifier.fillMaxWidth().padding(vertical = 12.dp).clip(RoundedCornerShape(16.dp)).background(cover?.palette?.card ?: Panel)) {
++        if (artist) {
++            Box(Modifier.fillMaxWidth().height(240.dp), contentAlignment = Alignment.Center) {
++                if (cover != null) Image(cover.image, "Фото исполнителя", Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
++                else Icon(ZiziIcons.Person, null, Modifier.size(72.dp), tint = Muted)
++            }
++            Column(Modifier.padding(20.dp)) {
++                Text(title, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
++                if (subtitle.isNotBlank()) Text(subtitle, color = Ink.copy(alpha = .8f))
++            }
++        } else Row(Modifier.padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
++            Artwork(track, s.client, 150.dp); Spacer(Modifier.width(24.dp))
++            Column { Text(title, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
++                Text(subtitle, color = Ink.copy(alpha = .8f), modifier = Modifier.padding(top = 12.dp)) }
++        }
++    }
++}
++@Composable private fun CollectionCards(cards: List<LibraryCard>, s: DesktopUi, modifier: Modifier, open: (LibraryCard) -> Unit) {
++    BoxWithConstraints(modifier) {
++        val columns = if (s.prefs.grid) (maxWidth.value / 190f).toInt().coerceIn(1, 6) else 1
++        LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
++            items(cards.chunked(columns)) { row ->
++                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
++                    row.forEach { card ->
++                        Column(Modifier.weight(1f).clip(RoundedCornerShape(14.dp)).background(Panel).clickable { open(card) }.padding(14.dp)) {
++                            if (s.prefs.grid) {
++                                if (card.cover != null) Artwork(card.cover, s.client, 130.dp)
++                                else Box(Modifier.size(130.dp).clip(RoundedCornerShape(10.dp)).background(Chip), contentAlignment = Alignment.Center) { Icon(card.icon, null, Modifier.size(46.dp), tint = Muted) }
++                                Spacer(Modifier.height(12.dp))
++                                Text(card.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
++                                Text(card.subtitle, color = Muted, maxLines = 1, style = MaterialTheme.typography.bodySmall)
++                            } else Row(verticalAlignment = Alignment.CenterVertically) {
++                                Artwork(card.cover, s.client, 52.dp); Spacer(Modifier.width(16.dp))
++                                Column(Modifier.weight(1f)) { Text(card.title, maxLines = 1, overflow = TextOverflow.Ellipsis); Text(card.subtitle, color = Muted) }
++                                Icon(ZiziIcons.ChevronRight, null, tint = Muted)
+                             }
+                         }
+                     }
+-                }
+-                Spacer(Modifier.height(12.dp))
+-                if (visible.isEmpty() && !s.searching && (page != "Поиск" || submitted || (query.isBlank() && s.recentSearches.isEmpty()))) {
+-                    Column(Modifier.fillMaxWidth().padding(top = 50.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+-                        Icon(if (page == "Поиск") ZiziIcons.Search else ZiziIcons.FolderMusic, null, Modifier.size(64.dp), tint = Brand)
+-                        Spacer(Modifier.height(18.dp))
+-                        Text(if (page == "Поиск") if (submitted) "Ничего не найдено" else "Что хочешь послушать?" else "Здесь будет твоя музыка", style = MaterialTheme.typography.titleLarge)
+-                        Text(if (page == "Поиск") if (s.client != null) "Треки и исполнители · поиск по каталогу Zizi" else s.connectionMessage else "Добавь файлы или открой zizi://-ссылку", color = Muted, modifier = Modifier.padding(top = 8.dp))
+-                    }
+-                }
+-                LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+-                    items(visible, key = { it.id }) { original ->
+-                        val selected = original.id == state.track?.id
+-                        val track = if (selected) state.track!! else metadata[original.id] ?: original
+-                        Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+-                            .background(if (selected) Brand.copy(alpha = 0.12f) else Color.Transparent)
+-                            .clickable(enabled = !closing) { s.player.play(track, all) }.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+-                            Artwork(track, s.client, 54.dp)
+-                            Spacer(Modifier.width(14.dp))
+-                            Column(Modifier.weight(1f)) {
+-                                Text(track.title, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, color = if (selected) Brand else Color.White)
+-                                Text(track.artist.ifBlank { if (track.source.startsWith("zizi://")) "Поток Zizi" else if (track.source.startsWith("http")) "Сетевое аудио" else "Локальный файл" }, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+-                            }
+-                            Text(track.durationMs?.let(::time) ?: "—", color = Muted, style = MaterialTheme.typography.bodySmall)
+-                        }
+-                    }
+-                }
+-            }
+-            AnimatedVisibility(effects,
+-                enter = expandHorizontally(tween(260, easing = FastOutSlowInEasing)) + fadeIn(tween(180)),
+-                exit = shrinkHorizontally(tween(220, easing = FastOutSlowInEasing)) + fadeOut(tween(140))) {
+-                EffectsPanel(s, Modifier.width(300.dp).fillMaxHeight().background(Panel).padding(18.dp))
+-            }
+-        }
+-        Transport(s, closing) { expanded = true }
+-    }
+-    if (settings) SettingsDialog(s) { settings = false }
+-    if (sourceDialog) SourceDialog(s) { sourceDialog = false }
+-    if (expanded) AlertDialog(containerColor = Panel, tonalElevation = 0.dp, onDismissRequest = { expanded = false }, title = { Text("Сейчас играет") }, text = {
+-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+-            Artwork(state.track, s.client, 280.dp); Spacer(Modifier.height(16.dp))
+-            Text(state.track?.title ?: "Музыка не выбрана", style = MaterialTheme.typography.titleLarge)
+-            Text(state.track?.artist.orEmpty(), color = Muted)
+-        }
+-    }, confirmButton = { TextButton(onClick = { expanded = false }) { Text("Свернуть") } })
++                    repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
++                }
++            }
++        }
++    }
++}
++@Composable private fun TrackRow(s: DesktopUi, original: PlayerTrack, all: List<PlayerTrack>, closing: Boolean,
++    queue: Boolean = false, playlistId: String? = null, onArtist: (PlayerTrack) -> Unit) {
++    val state by s.player.state.collectAsState()
++    val metadata by s.player.metadata.collectAsState()
++    val selected = original.id == state.track?.id
++    val track = if (selected) state.track!! else metadata[original.id] ?: original
++    var menu by remember { mutableStateOf(false) }
++    var playlists by remember { mutableStateOf(false) }
++    var remove by remember { mutableStateOf(false) }
++    val saved = s.tracks.any { it.id == track.id }
++    val favorite = track.id in s.library.favorites
++    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(if (selected) LocalMatte.current.chip else Color.Transparent)
++        .clickable(enabled = !closing) { s.player.play(track, all) }.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
++        Artwork(track, s.client, 52.dp); Spacer(Modifier.width(14.dp))
++        Column(Modifier.weight(1f)) {
++            Text(track.title, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis,
++                color = if (selected) LocalMatte.current.accent else Ink)
++            if (track.id in s.downloaded) Text("Скачано", color = Muted, style = MaterialTheme.typography.labelSmall)
++            Text(track.artist.ifBlank { if (track.source.startsWith("zizi://")) "Zizi" else "Локальный файл" }, color = Muted,
++                maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.clickable(enabled = track.artist.isNotBlank()) { onArtist(track) })
++        }
++        if (queue || playlistId != null) {
++            IconButton(onClick = { if (queue) s.player.move(track.id, -1) else s.playlistMove(playlistId!!, track.id, -1) }, enabled = all.indexOfFirst { it.id == track.id } > 0) { Icon(ZiziIcons.ChevronUp, "Переместить выше", Modifier.size(20.dp)) }
++            IconButton(onClick = { if (queue) s.player.move(track.id, 1) else s.playlistMove(playlistId!!, track.id, 1) }, enabled = all.indexOfFirst { it.id == track.id } < all.lastIndex) { Icon(ZiziIcons.ChevronDown, "Переместить ниже", Modifier.size(20.dp)) }
++        }
++        IconButton(onClick = { s.favorite(track) }) { Icon(if (favorite) ZiziIcons.HeartFilled else ZiziIcons.Heart,
++            if (favorite) "Убрать из избранного" else "В избранное", tint = if (favorite) Brand else Muted, modifier = Modifier.size(20.dp)) }
++        Text(track.durationMs?.let(::time) ?: "—", color = Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.width(42.dp))
++        Box {
++            IconButton(onClick = { menu = true }) { Icon(ZiziIcons.More, "Действия с треком") }
++            DropdownMenu(menu, { menu = false }) {
++                DropdownMenuItem(text = { Text(if (saved) "Убрать из медиатеки" else "Сохранить в медиатеку") }, onClick = { menu = false; if (saved) remove = true else s.save(track) })
++                DropdownMenuItem(text = { Text("Добавить в плейлист") }, onClick = { menu = false; playlists = true })
++                DropdownMenuItem(text = { Text("Слушать следующим") }, onClick = { s.player.enqueue(track, true); menu = false })
++                DropdownMenuItem(text = { Text("В конец очереди") }, onClick = { s.player.enqueue(track); menu = false })
++                if (track.source.startsWith("zizi://") && track.id !in s.downloaded)
++                    DropdownMenuItem(text = { Text("Скачать для офлайн") }, onClick = { s.download(track); menu = false })
++                if (track.artist.isNotBlank()) DropdownMenuItem(text = { Text("Перейти к исполнителю") }, onClick = { menu = false; onArtist(track) })
++                if (queue) DropdownMenuItem(text = { Text("Удалить из очереди") }, onClick = { s.player.remove(track.id); menu = false })
++                if (playlistId != null) DropdownMenuItem(text = { Text("Убрать из плейлиста") }, onClick = { s.playlistRemove(playlistId, track.id); menu = false })
++            }
++        }
++    }
++    if (remove) ConfirmDialog("Убрать из медиатеки?", "Трек будет убран также из избранного и твоих плейлистов. Файл на диске останется.",
++        { s.forget(track.id); remove = false }) { remove = false }
++    if (playlists) PlaylistPicker(s, track) { playlists = false }
++}
++@Composable private fun PlaylistPicker(s: DesktopUi, track: PlayerTrack, dismiss: () -> Unit) {
++    var title by remember { mutableStateOf("") }
++    AlertDialog(onDismissRequest = dismiss, containerColor = Panel, title = { Text("Добавить в плейлист") }, text = {
++        Column(Modifier.heightIn(max = 400.dp).verticalScroll(rememberScrollState())) {
++            s.library.playlists.forEach { list -> TextButton(onClick = { s.addToPlaylist(list.id, track); dismiss() }) { Text(list.title) } }
++            OutlinedTextField(title, { title = it.take(100) }, label = { Text("Название нового плейлиста") }, singleLine = true)
++        }
++    }, confirmButton = { TextButton(onClick = { s.playlist(title, listOf(track)); dismiss() }, enabled = title.isNotBlank()) { Text("Создать и добавить") } },
++        dismissButton = { TextButton(onClick = dismiss) { Text("Отмена") } })
++}
++@Composable private fun NameDialog(title: String, initial: String, confirm: (String) -> Unit, dismiss: () -> Unit) {
++    var text by remember { mutableStateOf(initial) }
++    AlertDialog(onDismissRequest = dismiss, containerColor = Panel, title = { Text(title) }, text = {
++        OutlinedTextField(text, { text = it.take(100) }, singleLine = true, label = { Text("Название") })
++    }, confirmButton = { TextButton(onClick = { confirm(text) }, enabled = text.isNotBlank()) { Text("Сохранить") } }, dismissButton = { TextButton(onClick = dismiss) { Text("Отмена") } })
++}
++@Composable private fun ConfirmDialog(title: String, text: String, confirm: () -> Unit, dismiss: () -> Unit) {
++    AlertDialog(onDismissRequest = dismiss, containerColor = Panel, title = { Text(title) }, text = { Text(text) },
++        confirmButton = { TextButton(onClick = confirm) { Text("Удалить") } }, dismissButton = { TextButton(onClick = dismiss) { Text("Отмена") } })
++}
++@Composable private fun PlaylistControls(s: DesktopUi, id: String, deleted: () -> Unit) {
++    var rename by remember { mutableStateOf(false) }; var remove by remember { mutableStateOf(false) }
++    IconButton(onClick = { rename = true }) { Icon(ZiziIcons.Edit, "Переименовать плейлист") }
++    IconButton(onClick = { remove = true }) { Icon(ZiziIcons.Trash, "Удалить плейлист") }
++    if (rename) NameDialog("Переименовать плейлист", s.library.playlists.find { it.id == id }?.title.orEmpty(),
++        { s.renamePlaylist(id, it); rename = false }) { rename = false }
++    if (remove) ConfirmDialog("Удалить плейлист?", "Треки останутся в медиатеке, файлы не будут удалены.",
++        { s.deletePlaylist(id); remove = false; deleted() }) { remove = false }
+ }
+ @Composable private fun Transport(s: DesktopUi, closing: Boolean, expand: () -> Unit) {
+     val state by s.player.state.collectAsState()
+@@ -335,7 +550,7 @@
+     val position = if (valid) progress.positionMs else 0
+     var drag by remember(state.generation) { mutableStateOf<Float?>(null) }
+     HorizontalDivider(color = Color(0xFF292929))
+-    Column(Modifier.fillMaxWidth().background(Panel).padding(horizontal = 22.dp, vertical = 12.dp)) {
++    Column(Modifier.fillMaxWidth().background(LocalMatte.current.surface).padding(horizontal = 18.dp, vertical = 12.dp)) {
+         Row(verticalAlignment = Alignment.CenterVertically) {
+             Text(time((drag?.toLong() ?: position)), color = Muted, style = MaterialTheme.typography.labelSmall, modifier = Modifier.width(48.dp))
+             Slider(value = drag ?: position.toFloat().coerceIn(0f, duration.coerceAtLeast(1).toFloat()),
+@@ -343,11 +558,14 @@
+                 enabled = state.seekable && duration > 0 && !closing, valueRange = 0f..duration.coerceAtLeast(1).toFloat(), modifier = Modifier.weight(1f).height(24.dp))
+             Text(if (duration > 0) time(duration) else "—:—", color = Muted, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(start = 12.dp).width(48.dp))
+         }
+-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
++        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+             Box(Modifier.clickable(onClick = expand)) { Artwork(state.track, s.client, 54.dp) }
+             Column(Modifier.weight(1f)) {
+                 Text(state.track?.title ?: "Zizi готов к музыке", maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Bold)
+-                Text(if (closing) "Закрываем аудиосеанс…" else state.message, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
++                Text(if (closing) "Закрываем аудиосеанс…" else if (s.downloadId != null) "Загрузка · ${s.downloadProgress}" else state.message, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
++            }
++            IconButton(onClick = { s.settings(s.prefs.copy(shuffle = !s.prefs.shuffle)) }, enabled = !closing) {
++                Icon(ZiziIcons.Shuffle, "Случайный порядок: ${if (s.prefs.shuffle) "включён" else "выключен"}", tint = if (s.prefs.shuffle) LocalMatte.current.accent else Muted)
+             }
+             IconButton(onClick = { s.player.adjacent(-1) }, enabled = !closing && s.player.queue.isNotEmpty()) { Icon(ZiziIcons.SkipPrevious, "Предыдущий трек") }
+             FilledIconButton(onClick = { s.player.togglePause() }, enabled = !closing && state.track != null, modifier = Modifier.size(52.dp)) {
+@@ -356,30 +574,145 @@
+             }
+             IconButton(onClick = { s.player.adjacent(1) }, enabled = !closing && s.player.queue.isNotEmpty()) { Icon(ZiziIcons.SkipNext, "Следующий трек") }
+             IconButton(onClick = { s.player.stop() }, enabled = !closing && state.track != null) { Icon(ZiziIcons.Stop, "Остановить") }
++            IconButton(onClick = { s.settings(s.prefs.copy(repeat = RepeatMode.entries[(s.prefs.repeat.ordinal + 1) % RepeatMode.entries.size])) }, enabled = !closing) {
++                Icon(if (s.prefs.repeat == RepeatMode.ONE) ZiziIcons.RepeatOne else ZiziIcons.Repeat,
++                    "Повтор: " + when (s.prefs.repeat) { RepeatMode.OFF -> "выключен"; RepeatMode.ALL -> "вся очередь"; RepeatMode.ONE -> "один трек" },
++                    tint = if (s.prefs.repeat == RepeatMode.OFF) Muted else LocalMatte.current.accent)
++            }
+             Text("${(s.gain * 100).toInt()}%", color = Muted)
+-            Slider(s.gain, s::volume, modifier = Modifier.width(110.dp))
+-        }
+-    }
+-}
+-@Composable private fun SettingsDialog(s: DesktopUi, dismiss: () -> Unit) {
++            Slider(s.gain, s::volume, modifier = Modifier.width(90.dp))
++        }
++    }
++}
++private data class SettingsSection(val title: String, val icon: ImageVector, val keywords: String)
++private val settingSections = listOf(
++    SettingsSection("Оформление", ZiziIcons.Palette, "цвет из обложки amoled тема палитра"),
++    SettingsSection("Библиотека", ZiziIcons.Library, "папки сканирование сортировка сетка список"),
++    SettingsSection("Звук", ZiziIcons.Equalizer, "эквалайзер dsp громкость эффекты глобально"),
++    SettingsSection("Загрузки", ZiziIcons.DownloadDone, "офлайн скачанные память диск"),
++    SettingsSection("Поиск", ZiziIcons.Search, "история недавние запросы"),
++    SettingsSection("О приложении", ZiziIcons.Info, "версия диагностика ffmpeg сеть сервер"))
++
++@Composable private fun SettingsContent(s: DesktopUi, effects: () -> Unit) {
++    var section by remember { mutableStateOf<String?>(null) }
++    var filter by remember { mutableStateOf("") }
++    var diagnostics by remember { mutableStateOf(false) }
++    var confirmHistory by remember { mutableStateOf(false) }
++    val state by s.player.state.collectAsState()
++    Row(verticalAlignment = Alignment.CenterVertically) {
++        if (section != null) IconButton(onClick = { section = null; filter = "" }) { Icon(ZiziIcons.ArrowBack, "Все настройки") }
++        Text(section ?: "Настройки", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
++    }
++    Spacer(Modifier.height(20.dp))
++    DesktopSearchField(filter, { filter = it; section = null }, onSubmit = {}, onFocus = {}, hint = "Найти настройку", mobileSearch = false)
++    Spacer(Modifier.height(20.dp))
++    val shown = settingSections.filter { entry -> (section == null || entry.title == section) &&
++        filter.trim().split(Regex("\\s+")).all { (entry.title + " " + entry.keywords).contains(it, true) } }
++    LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
++        if (section == null && filter.isBlank()) {
++            items(settingSections.chunked(2)) { pair ->
++                Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
++                    pair.forEach { item ->
++                        Column(Modifier.weight(1f).height(135.dp).clip(RoundedCornerShape(18.dp)).background(Panel)
++                            .clickable { section = item.title }.padding(20.dp), verticalArrangement = Arrangement.SpaceBetween) {
++                            Icon(item.icon, null, Modifier.size(30.dp), tint = if (item.title == "Оформление") LocalMatte.current.accent else Ink)
++                            Text(item.title, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium)
++                        }
++                    }
++                }
++            }
++        } else {
++            items(shown) { entry ->
++                Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Panel).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
++                    Text(entry.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
++                    when (entry.title) {
++                        "Оформление" -> {
++                            SettingToggle("Цвет из обложки", s.prefs.artworkColor) { s.settings(s.prefs.copy(artworkColor = it)) }
++                            Row(Modifier.fillMaxWidth().height(86.dp).clip(RoundedCornerShape(14.dp)).background(LocalMatte.current.card).padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
++                                Icon(ZiziIcons.Palette, null, tint = LocalMatte.current.accent)
++                                Spacer(Modifier.width(16.dp)); Text("Матовый AMOLED", color = Ink)
++                            }
++                        }
++                        "Библиотека" -> {
++                            SettingToggle("Сетка коллекций", s.prefs.grid) { s.settings(s.prefs.copy(grid = it)) }
++                            Text("Сортировка треков", fontWeight = FontWeight.SemiBold)
++                            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
++                                for ((mode, label) in listOf(TrackSort.TITLE to "Название", TrackSort.ARTIST to "Исполнитель", TrackSort.RECENT to "Добавлены", TrackSort.DURATION to "Длительность"))
++                                    FilterChip(s.prefs.sort == mode, { s.settings(s.prefs.copy(sort = mode)) }, label = { Text(label) })
++                            }
++                            HorizontalDivider(color = Chip)
++                            s.library.folders.forEach { path ->
++                                Row(verticalAlignment = Alignment.CenterVertically) {
++                                    Column(Modifier.weight(1f)) { Text(File(path).name); Text(path, color = Muted, style = MaterialTheme.typography.bodySmall, maxLines = 2) }
++                                    IconButton(onClick = { s.scanFolder(File(path)) }, enabled = !s.scanning) { Icon(ZiziIcons.Refresh, "Пересканировать папку") }
++                                    IconButton(onClick = { s.removeFolder(path) }) { Icon(ZiziIcons.Close, "Отключить папку, оставить треки и файлы") }
++                                }
++                            }
++                            TextButton(onClick = { chooseFolder()?.let(s::scanFolder) }, enabled = !s.scanning) { Text(if (s.scanning) "Сканирование · ${s.scanMessage}" else "Добавить папку") }
++                            if (s.scanning) TextButton(onClick = s::cancelScan) { Text("Остановить сканирование") }
++                        }
++                        "Звук" -> {
++                            SettingToggle("Один эквалайзер для всей музыки", s.prefs.dspGlobal) { s.settings(s.prefs.copy(dspGlobal = it)) }
++                            Text(if (s.prefs.dspGlobal) "Общие настройки звука" else "Эффекты сохраняются отдельно для каждого трека", color = Muted)
++                            FilledTonalButton(onClick = effects) { Icon(ZiziIcons.Equalizer, null); Spacer(Modifier.width(10.dp)); Text("Открыть эквалайзер") }
++                            Text("Громкость · ${(s.gain * 100).toInt()}%")
++                            Slider(s.gain, s::volume)
++                        }
++                        "Загрузки" -> {
++                            Text("${s.downloadStats.first} треков · ${s.downloadStats.second / (1024 * 1024)} МБ", color = Muted)
++                            if (s.downloadId != null) Row(verticalAlignment = Alignment.CenterVertically) {
++                                Text("Загрузка · ${s.downloadProgress}", Modifier.weight(1f))
++                                TextButton(onClick = s::cancelDownload) { Text("Отменить") }
++                            }
++                            TextButton(onClick = { s.showDataFolder(true) }) { Text("Открыть папку загрузок") }
++                            TextButton(onClick = s::refreshDownloads) { Text("Проверить файлы") }
++                            TextButton(onClick = { s.scope.launch { withContext(Dispatchers.IO) { Covers.clear() }; s.notice = "Кэш обложек очищен. Аудиозагрузки сохранены." } }) { Text("Очистить кэш обложек") }
++                            s.tracks.filter { it.id in s.downloaded }.forEach { track -> Row(verticalAlignment = Alignment.CenterVertically) {
++                                Text(track.title, Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
++                                var confirm by remember(track.id) { mutableStateOf(false) }
++                                IconButton(onClick = { confirm = true }, enabled = track.id != state.track?.id) { Icon(ZiziIcons.Trash, "Удалить скачанный файл") }
++                                if (confirm) ConfirmDialog("Удалить скачанный файл?", "Трек останется в медиатеке и будет воспроизводиться из сети.",
++                                    { s.deleteDownload(track.id); confirm = false }) { confirm = false }
++                            } }
++                        }
++                        "Поиск" -> {
++                            Text("История запросов · ${s.recentSearches.size}", color = Muted)
++                            TextButton(onClick = { confirmHistory = true }, enabled = s.recentSearches.isNotEmpty()) { Text("Очистить историю поиска") }
++                        }
++                        "О приложении" -> {
++                            Text("ZiziPlayer Desktop 0.3.2 preview")
++                            TextButton(onClick = { s.showDataFolder() }) { Text("Открыть папку данных") }
++                            TextButton(onClick = { diagnostics = true }) { Text("Диагностика и аудиодекодер") }
++                        }
++                    }
++                }
++            }
++            if (shown.isEmpty()) item { Text("Настройка не найдена", color = Muted) }
++        }
++    }
++    if (diagnostics) AudioToolsDialog(s) { diagnostics = false }
++    if (confirmHistory) ConfirmDialog("Очистить историю?", "Сохранённые треки и плейлисты не изменятся.",
++        { s.clearHistory(); confirmHistory = false }) { confirmHistory = false }
++}
++@Composable private fun SettingToggle(title: String, value: Boolean, change: (Boolean) -> Unit) {
++    Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
++        Text(title, Modifier.weight(1f)); Spacer(Modifier.width(16.dp)); Switch(value, change)
++    }
++}
++@Composable private fun AudioToolsDialog(s: DesktopUi, dismiss: () -> Unit) {
+     var executable by remember { mutableStateOf(s.ffmpeg) }
+     AlertDialog(containerColor = Panel, tonalElevation = 0.dp, onDismissRequest = dismiss,
+-        title = { Text("Настройки Zizi") }, text = {
+-        Column(verticalArrangement = Arrangement.spacedBy(17.dp)) {
+-            Text("Подключение", fontWeight = FontWeight.SemiBold)
++        title = { Text("Диагностика") }, text = {
++        Column(Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+             Text(s.connectionMessage, color = Muted)
+-            Text("Сервер и авторизация настраиваются в сборке. Ввод ключей в приложении не нужен.", color = Muted)
+-            if (s.httpCompatibility) Text("Режим совместимости HTTP: трафик до сервера не зашифрован. Для защиты соединения нужен HTTPS.",
+-                color = Brand, style = MaterialTheme.typography.bodySmall)
++            if (s.httpCompatibility) Text("Соединение с сервером использует HTTP и не зашифровано.", color = Brand)
+             HorizontalDivider(color = Chip)
+             Text("Аудиодекодер", fontWeight = FontWeight.SemiBold)
+-            OutlinedTextField(executable, { executable = it }, label = { Text("Путь к FFmpeg") }, singleLine = true,
+-                modifier = Modifier.fillMaxWidth())
++            OutlinedTextField(executable, { executable = it }, label = { Text("Путь к FFmpeg") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+             TextButton(onClick = { val picker = JFileChooser(); if (picker.showOpenDialog(null) == JFileChooser.APPROVE_OPTION) executable = picker.selectedFile.absolutePath }) { Text("Выбрать FFmpeg…") }
+-            Text("ffprobe должен лежать рядом с FFmpeg. Изменения применяются при следующем открытии трека.", color = Muted,
+-                style = MaterialTheme.typography.bodySmall)
+-        }
+-    }, confirmButton = { TextButton(onClick = { s.audioSettings(executable); dismiss() }) { Text("Готово") } },
++            Text("ffprobe должен лежать рядом. Новый путь применяется при следующем открытии трека.", color = Muted, style = MaterialTheme.typography.bodySmall)
++        }
++    }, confirmButton = { TextButton(onClick = { s.audioSettings(executable); dismiss() }, enabled = executable.isNotBlank()) { Text("Сохранить") } },
+         dismissButton = { TextButton(onClick = dismiss) { Text("Отмена") } })
+ }
+ @Composable private fun SourceDialog(s: DesktopUi, dismiss: () -> Unit) {
+@@ -398,6 +731,12 @@
+ private fun EffectsPanel(s: DesktopUi, modifier: Modifier) {
+     Column(modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+         Text("Звук Zizi", style = MaterialTheme.typography.titleLarge)
++        SettingToggle("Для всей музыки", s.prefs.dspGlobal) { s.settings(s.prefs.copy(dspGlobal = it)) }
++        val state by s.player.state.collectAsState()
++        if (!s.prefs.dspGlobal && state.track == null) {
++            Text("Выбери трек для настройки его звучания.", color = Muted)
++            return@Column
++        }
+         Row(verticalAlignment = Alignment.CenterVertically) {
+             Text("DSP", Modifier.weight(1f)); Switch(s.config.enabled, { s.dsp(s.config.copy(enabled = it)) })
+         }
+@@ -429,7 +768,19 @@
+         Slider(s.config.rotation, { s.dsp(s.config.copy(enabled = true, rotation = it)) })
+         Text("Под водой")
+         Slider(s.config.underwater, { s.dsp(s.config.copy(enabled = true, underwater = it)) })
+-        Text("Профили, speed/pitch и спектр будут отдельными доработками.", style = MaterialTheme.typography.bodySmall)
++        Text("Ширина стерео")
++        Slider(s.config.width, { s.dsp(s.config.copy(enabled = true, width = it)) }, valueRange = -1f..1f)
++        Text("Насыщение баса")
++        Slider(s.config.bassDrive, { s.dsp(s.config.copy(enabled = true, bassDrive = it)) })
++        Text("Воздух")
++        Slider(s.config.air, { s.dsp(s.config.copy(enabled = true, air = it)) })
++        Text("Размер помещения")
++        Slider(s.config.reverbSize, { s.dsp(s.config.copy(enabled = true, reverbSize = it)) })
++        Text("Поглощение верха")
++        Slider(s.config.reverbDamp, { s.dsp(s.config.copy(enabled = true, reverbDamp = it)) })
++        Text("Ламповое насыщение")
++        Slider(s.config.drive, { s.dsp(s.config.copy(enabled = true, drive = it)) })
++        SettingToggle("Лимитер", s.config.limiter) { s.dsp(s.config.copy(limiter = it)) }
+     }
+ }
+ 
+--- 0.3.1/src/main/kotlin/app/ziziplayer/desktop/ui/DesktopUi.kt
++++ 0.3.2/src/main/kotlin/app/ziziplayer/desktop/ui/DesktopUi.kt
+@@ -0,0 +1,339 @@
++package app.ziziplayer.desktop.ui
++
++import androidx.compose.runtime.*
++import app.ziziplayer.desktop.*
++import app.ziziplayer.desktop.network.*
++import app.ziziplayer.playback.dsp.*
++import kotlinx.coroutines.*
++import kotlinx.coroutines.channels.Channel
++import kotlinx.coroutines.flow.collect
++import java.io.File
++import java.nio.file.Files
++import javax.swing.JFileChooser
++
++internal class DesktopUi(val scope: CoroutineScope, val store: LibraryStore, initial: LibrarySnapshot) {
++    val player = DesktopPlayer(scope)
++    val offline = OfflineFiles(store.directory.resolve("downloads"))
++    var downloaded by mutableStateOf<Set<String>>(emptySet()); private set
++    var downloadId by mutableStateOf<String?>(null); private set
++    var downloadProgress by mutableStateOf(""); private set
++    var downloadStats by mutableStateOf(0 to 0L); private set
++    private var downloadJob: Job? = null
++    var library by mutableStateOf(initial); private set
++    val tracks get() = library.tracks
++    val prefs get() = library.settings
++    var results by mutableStateOf<List<PlayerTrack>>(emptyList()); private set
++    var groups by mutableStateOf<List<CatalogCollection>>(emptyList()); private set
++    var nextBrowse by mutableStateOf<Int?>(null); private set
++    var searchKind by mutableStateOf("track"); private set
++    var searching by mutableStateOf(false); private set
++    var searchMessage by mutableStateOf("Что хочешь послушать?"); private set
++    var openPage by mutableStateOf<CatalogPage?>(null); private set
++    var opening by mutableStateOf(false); private set
++    var pageError by mutableStateOf(""); private set
++    var notice by mutableStateOf("")
++    var scanning by mutableStateOf(false); private set
++    var scanMessage by mutableStateOf(""); private set
++    var config by mutableStateOf(DspConfig.NEUTRAL); private set
++    var gain by mutableStateOf(prefs.volume); private set
++    var client by mutableStateOf<ZiziClient?>(null); private set
++    var connectionMessage by mutableStateOf("Каталог недоступен в этой сборке"); private set
++    var httpCompatibility by mutableStateOf(false); private set
++    var recentSearches by mutableStateOf(DesktopPreferences.recentSearches); private set
++    var ffmpeg by mutableStateOf(DesktopPreferences.ffmpeg.ifBlank { player.ffmpeg })
++    private var searchJob: Job? = null
++    private var pageJob: Job? = null
++    private var scanJob: Job? = null
++    private var folderJob: Job? = null
++    private var lastQuery = ""
++    private data class Write(val value: LibrarySnapshot, val ack: CompletableDeferred<Boolean>? = null)
++    private val writes = Channel<Write>(Channel.UNLIMITED)
++    private val writer = scope.launch(Dispatchers.IO) {
++        for (first in writes) {
++            var latest = first
++            val acknowledgements = mutableListOf<CompletableDeferred<Boolean>>()
++            first.ack?.let { acknowledgements.add(it) }
++            while (true) {
++                val next = writes.tryReceive().getOrNull() ?: break
++                latest = next; next.ack?.let { acknowledgements.add(it) }
++            }
++            val success = runCatching { store.save(latest.value) }.isSuccess
++            if (!success) withContext(Dispatchers.Main) { notice = "Не удалось сохранить библиотеку. Проверь свободное место и доступ к папке данных." }
++            acknowledgements.forEach { it.complete(success) }
++        }
++    }
++
++    private var periodic: Job? = null
++    private var shuttingDown = false
++    init {
++        player.ffmpeg = ffmpeg; player.volume(prefs.volume)
++        player.localSource = offline::existing
++        refreshDownloads()
++        player.repeatMode = prefs.repeat; player.shuffled = prefs.shuffle
++        player.restore(initial.queue, initial.selected, initial.positionMs)
++        player.configForTrack = { track -> dspFor(track.id).also { config = it } }
++        config = dspFor(initial.selected)
++        player.dsp(config)
++        player.onQueueChanged = { persist() }
++        if (!store.writable) notice = "Файл библиотеки повреждён или создан более новой версией. Исходные файлы сохранены; запись заблокирована."
++        else if (store.recovered) notice = "Библиотека восстановлена из резервной копии."
++        try {
++            val connection = BundledConnection.load()
++            if (connection != null) {
++                val api = connection.client(DesktopPreferences.installId)
++                client = api; player.client = api; httpCompatibility = connection.usesHttp
++                connectionMessage = "Конфигурация загружена"
++                scope.launch { withContext(Dispatchers.IO) { api.headers() } }
++            }
++        } catch (_: Exception) { connectionMessage = "Ошибка конфигурации сборки" }
++        periodic = scope.launch {
++            while (isActive) { delay(5000); if (player.state.value.track != null) persist() }
++        }
++        // Keep probed local metadata, not only the last session's filename.
++        scope.launch {
++            player.metadata.collect { map ->
++                if (map.isNotEmpty() && !shuttingDown) {
++                    library = library.copy(tracks = library.tracks.map { original ->
++                        map[original.id]?.copy(artwork = null) ?: original
++                    }); persist()
++                }
++            }
++        }
++    }
++    private fun dspFor(id: String?): DspConfig = DspCodec.decode(
++        if (prefs.dspGlobal) prefs.globalDsp else id?.let { prefs.trackDsp[it] })
++    private fun snapshot(): LibrarySnapshot {
++        val state = player.state.value; val progress = player.progress.value
++        return library.copy(queue = player.queue, selected = state.track?.id,
++            positionMs = if (progress.trackId == state.track?.id && progress.generation == state.generation) progress.positionMs else 0)
++    }
++    private fun persist() { if (store.writable && !shuttingDown) writes.trySend(Write(snapshot())) }
++    fun shutdown(done: () -> Unit, failed: () -> Unit) {
++        shuttingDown = true
++        periodic?.cancel(); searchJob?.cancel(); pageJob?.cancel(); scanJob?.cancel(); folderJob?.cancel()
++        val final = snapshot()
++        scope.launch {
++            downloadJob?.cancelAndJoin()
++            val ack = CompletableDeferred<Boolean>()
++            if (store.writable) { writes.send(Write(final, ack)); if (!ack.await()) { shuttingDown = false; failed(); return@launch } }
++            writes.close(); writer.join()
++            player.close(done)
++        }
++    }
++    fun settings(value: DesktopSettings) {
++        library = library.copy(settings = value)
++        player.repeatMode = value.repeat; player.shuffled = value.shuffle
++        config = dspFor(player.state.value.track?.id); player.dsp(config); persist()
++    }
++    fun audioSettings(executable: String) {
++        ffmpeg = executable.trim().removeSurrounding("\"")
++        player.ffmpeg = ffmpeg; DesktopPreferences.ffmpeg = ffmpeg
++    }
++    fun clearHistory() { recentSearches = emptyList(); DesktopPreferences.recentSearches = emptyList() }
++    fun dsp(value: DspConfig) {
++        player.dsp(value); config = player.config
++        val encoded = DspCodec.encode(config); val id = player.state.value.track?.id
++        library = library.copy(settings = if (prefs.dspGlobal) prefs.copy(globalDsp = encoded)
++            else if (id != null) prefs.copy(trackDsp = prefs.trackDsp + (id to encoded)) else prefs)
++        persist()
++    }
++    fun volume(value: Float) {
++        player.volume(value); gain = player.gain
++        library = library.copy(settings = prefs.copy(volume = gain)) // periodic + shutdown persist; no disk writes per slider pixel
++    }
++    fun save(track: PlayerTrack) {
++        if (tracks.none { it.id == track.id }) library = library.copy(tracks = tracks + track)
++        persist()
++    }
++    fun favorite(track: PlayerTrack) {
++        save(track)
++        library = library.copy(favorites = if (track.id in library.favorites) library.favorites - track.id else library.favorites + track.id)
++        persist()
++    }
++    fun forget(id: String) {
++        library = library.copy(tracks = tracks.filterNot { it.id == id }, favorites = library.favorites - id,
++            playlists = library.playlists.map { it.copy(trackIds = it.trackIds - id) },
++            settings = prefs.copy(trackDsp = prefs.trackDsp - id)); persist()
++    }
++    fun playlist(title: String, selection: List<PlayerTrack> = emptyList()): String? {
++        val name = title.trim().take(100); if (name.isBlank()) return null
++        val list = UserPlaylist(title = name, trackIds = selection.map { it.id }.distinct())
++        library = library.copy(tracks = (tracks + selection).distinctBy { it.id }, playlists = library.playlists + list)
++        persist(); return list.id
++    }
++    fun renamePlaylist(id: String, title: String) {
++        if (title.isBlank()) return
++        library = library.copy(playlists = library.playlists.map { if (it.id == id) it.copy(title = title.trim().take(100)) else it }); persist()
++    }
++    fun deletePlaylist(id: String) { library = library.copy(playlists = library.playlists.filterNot { it.id == id }); persist() }
++    fun addToPlaylist(id: String, track: PlayerTrack) {
++        save(track); library = library.copy(playlists = library.playlists.map {
++            if (it.id == id) it.copy(trackIds = (it.trackIds + track.id).distinct()) else it
++        }); persist()
++    }
++    fun playlistRemove(id: String, track: String) {
++        library = library.copy(playlists = library.playlists.map { if (it.id == id) it.copy(trackIds = it.trackIds - track) else it }); persist()
++    }
++    fun playlistMove(id: String, track: String, delta: Int) {
++        library = library.copy(playlists = library.playlists.map { list ->
++            if (list.id != id) list else {
++                val ids = list.trackIds.toMutableList(); val at = ids.indexOf(track)
++                if (at >= 0 && at + delta in ids.indices) ids.add(at + delta, ids.removeAt(at))
++                list.copy(trackIds = ids)
++            }
++        }); persist()
++    }
++    fun playlistTracks(id: String): List<PlayerTrack> {
++        val map = tracks.associateBy { it.id }
++        return library.playlists.find { it.id == id }?.trackIds.orEmpty().mapNotNull { map[it] }
++    }
++    fun sorted(input: List<PlayerTrack>): List<PlayerTrack> = when (prefs.sort) {
++        TrackSort.TITLE -> input.sortedBy { it.title.lowercase() }
++        TrackSort.ARTIST -> input.sortedWith(compareBy({ it.artist.lowercase() }, { it.title.lowercase() }))
++        TrackSort.RECENT -> input.reversed()
++        TrackSort.DURATION -> input.sortedBy { it.durationMs ?: Long.MAX_VALUE }
++    }
++    fun add(files: List<File>) {
++        library = library.copy(tracks = (tracks + files.map { PlayerTrack(it.absolutePath, it.nameWithoutExtension) }).distinctBy { it.id }); persist()
++        if (files.isEmpty() || scanning) return
++        scanJob = scope.launch {
++            scanning = true
++            try {
++                val exe = ffmpeg
++                for ((index, file) in files.withIndex()) {
++                    scanMessage = "${index + 1} / ${files.size}"
++                    ensureActive()
++                    val info = withContext(Dispatchers.IO) { runCatching { Metadata.read(exe, file.absolutePath, true, false) }.getOrNull() }
++                    if (info != null) library = library.copy(tracks = tracks.map {
++                        if (it.id == file.absolutePath) it.copy(title = info.title ?: it.title, artist = info.artist ?: it.artist, durationMs = info.durationMs) else it
++                    })
++                }
++                persist()
++            } finally { scanning = false; scanMessage = ""; persist() }
++        }
++    }
++    fun scanFolder(folder: File) {
++        if (scanning) return
++        folderJob = scope.launch {
++            scanning = true
++            try {
++                val path = withContext(Dispatchers.IO) { folder.canonicalPath }
++                val files = withContext(Dispatchers.IO) {
++                    Files.walk(File(path).toPath()).use { stream -> stream.filter { Files.isRegularFile(it) &&
++                        it.toString().substringAfterLast('.').lowercase() in setOf("mp3", "flac", "m4a", "aac", "ogg", "opus", "wav", "wma") }
++                        .limit(10000).map { it.toFile() }.toList() }
++                }
++                if (files.size >= 10000) notice = "За один проход добавляются до 10 000 файлов. Для большой медиатеки добавляй подпапки отдельно."
++                library = library.copy(folders = (library.folders + path).distinct()); scanning = false; add(files)
++            } catch (e: CancellationException) { throw e }
++            catch (_: Exception) { notice = "Не удалось прочитать папку. Проверь доступ." }
++            finally { if (scanJob?.isActive != true) scanning = false }
++        }
++    }
++    fun cancelScan() { folderJob?.cancel(); scanJob?.cancel() }
++    fun removeFolder(path: String) {
++        library = library.copy(folders = library.folders - path); persist()
++    }
++    fun folderTracks(path: String) = tracks.filter {
++        !it.source.contains("://") && runCatching { File(it.source).toPath().normalize().startsWith(File(path).toPath().normalize()) }.getOrDefault(false)
++    }
++    fun addSource(raw: String) {
++        val input = raw.trim()
++        val source = if (input.startsWith("zizi://")) {
++            val (provider, id) = RemoteIdentity.parse(input); "zizi://$provider/$id"
++        } else HttpTransport.safeUri(input).toString()
++        save(PlayerTrack(source, if (source.startsWith("zizi://")) "Трек Zizi" else "Сетевой трек"))
++    }
++    fun refreshDownloads() {
++        scope.launch {
++            val ids = tracks.map { it.id }
++            val status = withContext(Dispatchers.IO) {
++                ids.filter { offline.existing(it) != null }.toSet() to offline.statistics()
++            }
++            downloaded = status.first; downloadStats = status.second
++        }
++    }
++    fun download(track: PlayerTrack) {
++        if (downloadJob?.isActive == true) { notice = "Дождись текущей загрузки или отмени её."; return }
++        val api = client ?: return
++        save(track); downloadId = track.id; downloadProgress = "Подготовка…"
++        downloadJob = scope.launch {
++            try {
++                val exe = ffmpeg
++                offline.download(track, api, exe) { bytes, total ->
++                    scope.launch {
++                        downloadProgress = if (total != null && total > 0) "${bytes * 100 / total}%" else "${bytes / (1024 * 1024)} МБ"
++                    }
++                }
++                downloaded = downloaded + track.id; notice = "Трек доступен офлайн."
++            } catch (e: CancellationException) { throw e }
++            catch (_: Exception) { notice = "Загрузка не завершена. Проверь сеть, свободное место и FFmpeg." }
++            finally { downloadId = null; downloadProgress = ""; refreshDownloads() }
++        }
++    }
++    fun cancelDownload() { downloadJob?.cancel() }
++    fun deleteDownload(id: String) {
++        if (id == player.state.value.track?.id || id == downloadId) { notice = "Сначала выбери другой трек и дождись окончания загрузки."; return }
++        scope.launch {
++            try { withContext(Dispatchers.IO) { offline.remove(id) }; downloaded = downloaded - id; refreshDownloads() }
++            catch (_: Exception) { notice = "Не удалось удалить загрузку. Файл может быть занят." }
++        }
++    }
++    fun showDataFolder(downloads: Boolean = false) {
++        scope.launch(Dispatchers.IO) {
++            runCatching {
++                val path = if (downloads) offline.directory else store.directory
++                Files.createDirectories(path)
++                if (java.awt.Desktop.isDesktopSupported()) java.awt.Desktop.getDesktop().open(path.toFile())
++            }.onFailure { withContext(Dispatchers.Main) { notice = "Не удалось открыть папку в проводнике." } }
++        }
++    }
++    fun selectSearchKind(kind: String) { searchKind = kind; cancelSearch() }
++    fun cancelSearch() { searchJob?.cancel(); searching = false; results = emptyList(); groups = emptyList(); nextBrowse = null }
++    fun search(query: String, kind: String = searchKind, more: Boolean = false) {
++        searchJob?.cancel()
++        val q = query.trim(); if (q.isBlank() || q.length > 300) return
++        val api = client ?: run { searchMessage = connectionMessage; return }
++        val offset = if (more) nextBrowse ?: return else 0
++        searchKind = kind; lastQuery = q
++        if (!more) { results = emptyList(); groups = emptyList(); nextBrowse = null }
++        recentSearches = (listOf(q) + recentSearches).distinctBy { it.lowercase() }.take(20)
++        DesktopPreferences.recentSearches = recentSearches
++        searching = true; searchMessage = "Ищем музыку…"
++        searchJob = scope.launch {
++            try {
++                if (kind == "track") results = runInterruptible(Dispatchers.IO) { api.search(q) }
++                else {
++                    val page = runInterruptible(Dispatchers.IO) { api.browse(q, kind, offset) }
++                    groups = (if (more) groups + page.items else page.items).distinctBy { it.key }; nextBrowse = page.nextOffset
++                }
++                connectionMessage = "Каталог доступен"
++                searchMessage = if (results.isEmpty() && groups.isEmpty()) "Ничего не найдено" else "Результаты поиска"
++            } catch (e: CancellationException) { throw e }
++            catch (e: Exception) { searchMessage = networkMessage(e) }
++            finally { if (isActive) searching = false }
++        }
++    }
++    fun moreSearch() = search(lastQuery, searchKind, true)
++    fun closePage() { pageJob?.cancel(); openPage = null; opening = false; pageError = "" }
++    fun open(collection: CatalogCollection, more: Boolean = false) {
++        pageJob?.cancel(); val api = client ?: return
++        val offset = if (more) openPage?.nextOffset ?: return else 0
++        if (!more) openPage = CatalogPage(collection, emptyList(), null, null)
++        opening = true; pageError = ""
++        pageJob = scope.launch {
++            try {
++                val page = runInterruptible(Dispatchers.IO) { api.collection(collection, offset) }
++                openPage = if (more) page.copy(tracks = (openPage!!.tracks + page.tracks).distinctBy { it.id }) else page
++            } catch (e: CancellationException) { throw e }
++            catch (e: Exception) { pageError = networkMessage(e) }
++            finally { if (isActive) opening = false }
++        }
++    }
++    private fun networkMessage(e: Exception): String = if (e is NetworkFailure) when (e.code) {
++        401, 403 -> "Не удалось подтвердить доступ. Попробуй позже."
++        404 -> "Этот раздел пока недоступен на сервере."
++        429 -> "Слишком много запросов. Повтори позже."
++        else -> "Не удалось загрузить: HTTP ${e.code}"
++    } else "Не удалось загрузить. Проверь соединение и повтори."
++}
+--- 0.3.1/src/test/java/app/ziziplayer/ui/ArtworkColorMathChecks.java
++++ 0.3.2/src/test/java/app/ziziplayer/ui/ArtworkColorMathChecks.java
+@@ -0,0 +1,185 @@
++package app.ziziplayer.ui;
++
++import app.ziziplayer.ui.theme.ArtworkColorMath;
++import java.nio.ByteBuffer;
++import java.nio.ByteOrder;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.util.Arrays;
++import java.util.Random;
++
++/** Real production-math tests. Also executable without Android, Gradle or JUnit. */
++public final class ArtworkColorMathChecks {
++    private static void check(boolean condition, String message) {
++        if (!condition) throw new AssertionError(message);
++    }
++    private static int[] fill(int color) { int[] a = new int[4096]; Arrays.fill(a, color); return a; }
++    private static int r(int c) { return (c >>> 16) & 255; }
++    private static int g(int c) { return (c >>> 8) & 255; }
++    private static int b(int c) { return c & 255; }
++    private static double contrast(int a, int b) {
++        double x = ArtworkColorMath.luminance(a), y = ArtworkColorMath.luminance(b);
++        return (Math.max(x, y) + .05) / (Math.min(x, y) + .05);
++    }
++    private static double hue(int c) {
++        double r = r(c), g = g(c), b = b(c);
++        double max = Math.max(r, Math.max(g, b)), min = Math.min(r, Math.min(g, b));
++        double d = max - min;
++        if (d == 0) return 0;
++        double h = max == r ? (g - b) / d : max == g ? (b - r) / d + 2 : (r - g) / d + 4;
++        return (h * 60 + 360) % 360;
++    }
++    private static double hueGap(int a, int b) { return Math.abs((hue(a) - hue(b) + 540) % 360 - 180); }
++
++    public static void uniformColoursKeepHue() {
++        int[] inputs = {0xffff0000, 0xff00ff00, 0xff0000ff, 0xffff00ff, 0xffcc7722, 0xff8c8944, 0xff007788};
++        for (int c : inputs) {
++            int result = ArtworkColorMath.extract(fill(c))[0];
++            check(hueGap(c, result) < 1, "Uniform cover changed hue");
++        }
++    }
++    public static void primaryBeatsRivalHue() {
++        int[] a = fill(0xffcc1122); Arrays.fill(a, 3000, 4096, 0xff1122cc);
++        int c = ArtworkColorMath.extract(a)[0];
++        check(r(c) > b(c) * 4 && r(c) > g(c) * 4, "Red + minority blue turned purple");
++    }
++    public static void secondaryIsNotSynthetic() {
++        int[] s = ArtworkColorMath.extract(fill(0xff20dd40));
++        check(s[0] == s[1], "Single-hue cover acquired a made-up secondary");
++        check(hueGap(s[0], s[2]) < 1, "Deep fallback rotated hue");
++    }
++    public static void redSeamIsCircular() {
++        int[] a = fill(0xffee1020); Arrays.fill(a, 2048, 4096, 0xffee2010);
++        int c = ArtworkColorMath.extract(a)[0];
++        check(r(c) > 200 && g(c) < 40 && b(c) < 40, "Red hue seam became cyan");
++    }
++    public static void neighbouringBinsCombine() {
++        int[] a = fill(0xffdd1111); Arrays.fill(a, 1400, 2800, 0xffdd5511);
++        Arrays.fill(a, 2800, 4096, 0xff1111dd);
++        int c = ArtworkColorMath.extract(a)[0];
++        check(r(c) > b(c) * 3, "Split dominant hue lost to smaller blue region");
++    }
++    public static void blackAndWhiteStayNeutral() {
++        int[] a = fill(0xffeeeeee); Arrays.fill(a, 1000, 4096, 0xff080808);
++        for (int c : ArtworkColorMath.extract(a)) check(r(c) == g(c) && g(c) == b(c), "B/W tint");
++    }
++    public static void jpegNoiseStaysNeutral() {
++        int[] a = fill(0xff777674); Arrays.fill(a, 2000, 4096, 0xff414344);
++        int c = ArtworkColorMath.extract(a)[0];
++        check(r(c) == g(c) && g(c) == b(c), "JPEG noise invented a hue");
++    }
++    public static void tinyLogoCannotPaintPhotograph() {
++        int[] a = fill(0xff777777); Arrays.fill(a, 0, 40, 0xff00ff00);
++        int c = ArtworkColorMath.extract(a)[0];
++        check(r(c) == g(c) && g(c) == b(c), "One-percent logo painted whole backdrop");
++    }
++    public static void darkNoiseDoesNotOutvoteLitArtwork() {
++        int[] a = fill(0xff092408); Arrays.fill(a, 0, 1800, 0xffd53024);
++        int c = ArtworkColorMath.extract(a)[0];
++        check(r(c) > g(c) * 3, "Near-black green overruled visible red");
++    }
++    public static void transparentPixelsCannotVote() {
++        int[] a = fill(0x0000ff00); Arrays.fill(a, 0, 800, 0xffd32222);
++        check(r(ArtworkColorMath.extract(a)[0]) > 180, "Hidden transparent RGB voted");
++        check(ArtworkColorMath.extract(fill(0x8000ff00)) == null, "Translucent-only artwork should be unknown");
++    }
++    public static void emptyAndOversizeSamplesAreSafe() {
++        check(ArtworkColorMath.extract(null) == null, "Null input");
++        check(ArtworkColorMath.extract(new int[0]) == null, "Empty input");
++        boolean rejected = false;
++        try { ArtworkColorMath.extract(new int[4097]); } catch (IllegalArgumentException expected) { rejected = true; }
++        check(rejected, "Unbounded sampling accepted");
++        check(ArtworkColorMath.extract(new int[]{0xffff0000}) != null, "One-pixel cover failed");
++    }
++    public static void extremesRemainGraphite() {
++        for (int c : new int[]{0xff000000, 0xff777777, 0xffffffff}) {
++            int[] ramp = ArtworkColorMath.backdrop(ArtworkColorMath.extract(fill(c))[0]);
++            check(r(ramp[0]) == g(ramp[0]) && g(ramp[0]) == b(ramp[0]), "Neutral acquired tint");
++            check(ArtworkColorMath.luminance(ramp[0]) > .04, "Neutral ramp is still invisible");
++            check(ramp[6] == 0xff111111, "Bottom is not neutral near-black");
++        }
++    }
++    public static void vividHueIsNotDesaturated() {
++        int c = ArtworkColorMath.backdrop(0xff00ff00)[0];
++        check(g(c) >= 110 && r(c) == 0 && b(c) == 0, "Vivid green became weak grey-green");
++    }
++    public static void visibleTopForDarkArt() {
++        check(r(ArtworkColorMath.backdrop(0xff360606)[0]) >= 60, "Dark cover received invisible top");
++    }
++    public static void cardUsesItsOwnCover() {
++        int red = ArtworkColorMath.cardTop(0xffdd2233), blue = ArtworkColorMath.cardTop(0xff2233dd);
++        check(r(red) > b(red) * 2 && b(blue) > r(blue) * 2, "Card retained orange/common tint");
++        check(contrast(0xffd6d6d6, red) >= 4.5 && contrast(0xffd6d6d6, blue) >= 4.5, "Card caption contrast");
++    }
++    public static void fullRgbGridHasReadableMonotoneRamps() {
++        for (int r = 0; r <= 255; r += 17) for (int g = 0; g <= 255; g += 17) for (int b = 0; b <= 255; b += 17) {
++            int primary = 0xff000000 | (r << 16) | (g << 8) | b;
++            int[] ramp = ArtworkColorMath.backdrop(primary);
++            double previous = Double.POSITIVE_INFINITY;
++            for (int stop : ramp) {
++                double lum = ArtworkColorMath.luminance(stop);
++                check(lum <= previous + .0003, "Ramp got brighter near controls: " + Integer.toHexString(primary) + " " + previous + " -> " + lum);
++                check(contrast(0xffe0e0e0, stop) >= 4.5, "Secondary text below 4.5:1");
++                check(contrast(0xfff6f7f8, stop) >= 4.5, "Primary text below 4.5:1");
++                check((stop >>> 24) == 255, "Background not opaque");
++                previous = lum;
++            }
++            check(contrast(0xffd6d6d6, ArtworkColorMath.cardTop(primary)) >= 4.5, "Card contrast grid");
++            check(contrast(0xffe0e0e0, ArtworkColorMath.surface(primary)) >= 4.5, "Sheet contrast grid");
++            check(contrast(0xffe0e0e0, ArtworkColorMath.chip(primary)) >= 4.5, "Chip contrast grid");
++        }
++    }
++    public static void sourceHueSurvivesBrightnessCap() {
++        for (int r = 0; r <= 255; r += 17) for (int g = 0; g <= 255; g += 17) for (int b = 0; b <= 255; b += 17) {
++            if (Math.max(r, Math.max(g,b)) - Math.min(r, Math.min(g,b)) < 40) continue;
++            int c = 0xff000000 | (r << 16) | (g << 8) | b;
++            check(hueGap(c, ArtworkColorMath.coverTop(c)) < 3.5, "Brightness cap rotated hue");
++        }
++    }
++    public static void randomInputIsDeterministicAndUntouched() {
++        Random rng = new Random(6398);
++        for (int n = 0; n < 24; n++) {
++            int[] a = new int[4096]; for (int i = 0; i < a.length; i++) a[i] = rng.nextInt();
++            int[] saved = a.clone(); int[] first = ArtworkColorMath.extract(a);
++            check(Arrays.equals(first, ArtworkColorMath.extract(a)), "Non-deterministic swatches");
++            check(Arrays.equals(saved, a), "Sampler mutated shared input");
++        }
++    }
++    public static void mixEndpointsAreExact() {
++        check(ArtworkColorMath.mix(0xff123456, 0xffabcdef, 0) == 0xff123456, "Mix start");
++        check(ArtworkColorMath.mix(0xff123456, 0xffabcdef, 1) == 0xffabcdef, "Mix end");
++    }
++    public static void runAll() {
++        uniformColoursKeepHue(); primaryBeatsRivalHue(); secondaryIsNotSynthetic(); redSeamIsCircular();
++        neighbouringBinsCombine(); blackAndWhiteStayNeutral(); jpegNoiseStaysNeutral();
++        tinyLogoCannotPaintPhotograph(); darkNoiseDoesNotOutvoteLitArtwork(); transparentPixelsCannotVote();
++        emptyAndOversizeSamplesAreSafe(); extremesRemainGraphite(); vividHueIsNotDesaturated();
++        visibleTopForDarkArt(); cardUsesItsOwnCover(); fullRgbGridHasReadableMonotoneRamps();
++        sourceHueSurvivesBrightnessCap(); randomInputIsDeterministicAndUntouched(); mixEndpointsAreExact();
++    }
++    private static void referenceCrops(String folder) throws Exception {
++        String[] names = {"ACIDTEKK", "COMA", "MENTE_MA", "Megalomaniac", "URANIUM", "WA_WA_WA"};
++        double[] minHue = {0, 15, 320, 95, 30, 0};
++        double[] maxHue = {0, 35, 345, 120, 60, 15};
++        for (int i = 0; i < names.length; i++) {
++            byte[] bytes = Files.readAllBytes(Path.of(folder, names[i] + ".argb"));
++            check(bytes.length == 4096 * 4, "Reference sample size");
++            int[] pixels = new int[4096];
++            ByteBuffer.wrap(bytes).order(ByteOrder.BIG_ENDIAN).asIntBuffer().get(pixels);
++            int[] swatches = ArtworkColorMath.extract(pixels);
++            check(swatches != null, "Reference unexpectedly lost colour");
++            int main = swatches[0];
++            if (i == 0) check(r(main) == g(main) && g(main) == b(main), "ACIDTEKK must be graphite");
++            else check(hue(main) >= minHue[i] && hue(main) <= maxHue[i], "Reference hue family: " + names[i]);
++            System.out.printf("%s primary=#%06X top=#%06X card=#%06X%n", names[i], main & 0xffffff,
++                    ArtworkColorMath.backdrop(main)[0] & 0xffffff, ArtworkColorMath.cardTop(main) & 0xffffff);
++        }
++        System.out.println("PASS: 6 supplied reference crops (sampled covers, not rendered Compose screens).");
++    }
++    public static void main(String[] args) throws Exception {
++        runAll();
++        if (args.length > 0) referenceCrops(args[0]);
++        System.out.println("PASS: 19 real JVM math cases; 4096-colour contrast grid; deterministic random samples.");
++        System.out.println("Not an Android build, Compose render or device performance measurement.");
++    }
++}
+--- 0.3.1/src/test/kotlin/app/ziziplayer/desktop/ArtworkParityTest.kt
++++ 0.3.2/src/test/kotlin/app/ziziplayer/desktop/ArtworkParityTest.kt
+@@ -0,0 +1,6 @@
++package app.ziziplayer.desktop
++import app.ziziplayer.ui.ArtworkColorMathChecks
++import org.junit.Test
++class ArtworkParityTest {
++    @Test fun mobileColorRegressions() { ArtworkColorMathChecks.main(emptyArray()) }
++}
+--- 0.3.1/src/test/kotlin/app/ziziplayer/desktop/CatalogBrowseTest.kt
++++ 0.3.2/src/test/kotlin/app/ziziplayer/desktop/CatalogBrowseTest.kt
+@@ -0,0 +1,40 @@
++package app.ziziplayer.desktop
++
++import app.ziziplayer.desktop.network.*
++import com.sun.net.httpserver.HttpServer
++import java.net.InetSocketAddress
++import org.junit.Assert.*
++import org.junit.Test
++
++class CatalogBrowseTest {
++    @Test fun collectionHasOwnHeroAndPagedTypedTracks() {
++        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
++        server.createContext("/catalog/browse/collection") { e ->
++            val body = """{"contract":1,"src":"deezer","collection":{"id":"17","kind":"artist","title":"Artist","art":"https://example.org/artist.jpg"},"items":[{"id":"42","src":"deezer","title":"Track","artist":"Artist","art":"https://example.org/album.jpg"}],"total":80,"next_offset":50}""".toByteArray()
++            e.sendResponseHeaders(200, body.size.toLong()); e.responseBody.use { it.write(body) }
++        }
++        server.start()
++        try {
++            val client = ZiziClient("http://127.0.0.1:${server.address.port}", "")
++            val page = client.collection(CatalogCollection("17", "artist", "Artist"))
++            assertEquals("https://example.org/artist.jpg", page.collection.artworkUrl)
++            assertEquals("https://example.org/album.jpg", page.tracks.single().artworkUrl)
++            assertEquals("zizi://dz/42", page.tracks.single().source)
++            assertEquals(50, page.nextOffset); assertEquals(80, page.total)
++            assertNull(page.tracks.single().durationMs)
++            assertThrows(IllegalArgumentException::class.java) { client.collection(CatalogCollection("spotify:17", "artist", "Wrong")) }
++        } finally { server.stop(0) }
++    }
++    @Test fun sourceMismatchIsRejected() {
++        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
++        server.createContext("/catalog/browse") { e ->
++            val body = """{"contract":1,"src":"spotify","items":[]}""".toByteArray()
++            e.sendResponseHeaders(200, body.size.toLong()); e.responseBody.use { it.write(body) }
++        }
++        server.start()
++        try {
++            val client = ZiziClient("http://127.0.0.1:${server.address.port}", "")
++            assertThrows(IllegalArgumentException::class.java) { client.browse("Artist", "artist") }
++        } finally { server.stop(0) }
++    }
++}
+--- 0.3.1/src/test/kotlin/app/ziziplayer/desktop/LibraryStoreTest.kt
++++ 0.3.2/src/test/kotlin/app/ziziplayer/desktop/LibraryStoreTest.kt
+@@ -0,0 +1,69 @@
++package app.ziziplayer.desktop
++
++import app.ziziplayer.playback.dsp.*
++import org.junit.Assert.*
++import org.junit.Test
++import java.nio.file.Files
++
++class LibraryStoreTest {
++    private val a = PlayerTrack("zizi://dz/17", "Музыка", "Исполнитель", artworkUrl = "https://example.org/art.jpg")
++    @Test fun roundTripPreservesOrderFavoritesAndDsp() {
++        val settings = DesktopSettings(artworkColor = false, grid = false, volume = .2f,
++            repeat = RepeatMode.ONE, shuffle = true, trackDsp = mapOf(a.id to DspCodec.encode(DspConfig(enabled = true, bassDrive = .4f))))
++        val expected = LibrarySnapshot(listOf(a), setOf(a.id), listOf(UserPlaylist("p", "Мой плейлист", listOf(a.id))),
++            listOf("C:/Music"), listOf(a), a.id, 12000, settings)
++        val actual = LibraryStore.decode(LibraryStore.encode(expected))
++        assertEquals(expected, actual)
++        assertEquals(.4f, DspCodec.decode(actual.settings.trackDsp[a.id]).bassDrive, .001f)
++    }
++    @Test fun interruptedWriteLeavesLastGoodBackupAndRecovers() {
++        val dir = Files.createTempDirectory("zizi-library-test")
++        val store = LibraryStore(dir)
++        store.save(LibrarySnapshot(tracks = listOf(a)))
++        store.save(LibrarySnapshot(tracks = listOf(a), favorites = setOf(a.id)))
++        Files.writeString(dir.resolve("library-v1.json"), "broken")
++        val fresh = LibraryStore(dir)
++        assertEquals(listOf(a), fresh.load().tracks)
++        assertTrue(fresh.recovered)
++        fresh.save(LibrarySnapshot(tracks = listOf(a)))
++        assertEquals(listOf(a), LibraryStore(dir).load().tracks)
++    }
++    @Test fun unknownVersionIsNeverReplacedWithOldBackup() {
++        val dir = Files.createTempDirectory("zizi-new-schema")
++        val store = LibraryStore(dir)
++        store.save(LibrarySnapshot(tracks = listOf(a))); store.save(LibrarySnapshot())
++        Files.writeString(dir.resolve("library-v1.json"), "{\"schema\":2}")
++        val fresh = LibraryStore(dir); fresh.load()
++        assertFalse(fresh.writable)
++        assertThrows(IllegalStateException::class.java) { fresh.save(LibrarySnapshot()) }
++        assertEquals("{\"schema\":2}", Files.readString(dir.resolve("library-v1.json")))
++    }
++    @Test fun brokenLibraryWithoutBackupIsReadOnly() {
++        val dir = Files.createTempDirectory("zizi-broken")
++        Files.writeString(dir.resolve("library-v1.json"), "bad")
++        val store = LibraryStore(dir); store.load(); assertFalse(store.writable)
++    }
++    @Test fun artworkBytesAndResolvedDurationAreNotPersisted() {
++        val text = LibraryStore.encode(LibrarySnapshot(tracks = listOf(a.copy(durationMs = 1234, artwork = ByteArray(100000)))))
++        assertTrue(text.length < 2000)
++        assertNull(LibraryStore.decode(text).tracks.single().durationMs)
++    }
++    @Test fun orphanPlaylistIdsArePrunedAndDuplicatesRemoved() {
++        val state = LibrarySnapshot(tracks = listOf(a, a), favorites = setOf("missing"),
++            playlists = listOf(UserPlaylist("p", "P", listOf("missing", a.id, a.id))))
++        val actual = LibraryStore.decode(LibraryStore.encode(state))
++        assertEquals(1, actual.tracks.size); assertTrue(actual.favorites.isEmpty())
++        assertEquals(listOf(a.id), actual.playlists.single().trackIds)
++    }
++    @Test fun offlinePathsCannotEscapeOwnedDirectory() {
++        val dir = Files.createTempDirectory("zizi-offline")
++        val files = OfflineFiles(dir)
++        for (id in listOf("../../etc/passwd", "zizi://dz/17", "C:/Music/test.mp3")) {
++            val path = files.path(id)
++            assertEquals(dir, path.parent)
++            assertTrue(path.fileName.toString().matches(Regex("[0-9a-f]{64}\\.audio")))
++        }
++        Files.write(files.path(a.id), byteArrayOf(1, 2, 3))
++        assertEquals(1 to 3L, files.statistics()); files.remove(a.id); assertNull(files.existing(a.id))
++    }
++}
+--- 0.3.1/src/test/kotlin/app/ziziplayer/desktop/QueueTest.kt
++++ 0.3.2/src/test/kotlin/app/ziziplayer/desktop/QueueTest.kt
+@@ -0,0 +1,73 @@
++package app.ziziplayer.desktop
++
++import kotlinx.coroutines.*
++import org.junit.Assert.*
++import org.junit.Test
++import java.io.ByteArrayInputStream
++import java.util.concurrent.CopyOnWriteArrayList
++import java.util.concurrent.Executors
++
++class QueueTest {
++    private class SinkStub : Sink {
++        private var frames = 0L
++        override fun start() {}
++        override fun pause(value: Boolean) {}
++        override fun playedFrames() = frames
++        override fun write(bytes: ByteArray, count: Int) { frames += count / 4; Thread.sleep(2) }
++        override fun finish() {}
++        override fun interrupt() {}
++        override fun close() {}
++    }
++    private fun playerTest(block: suspend (DesktopPlayer, CopyOnWriteArrayList<String>) -> Unit) = runBlocking {
++        val dispatcher = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
++        val scope = CoroutineScope(SupervisorJob() + dispatcher)
++        val opened = CopyOnWriteArrayList<String>()
++        val player = DesktopPlayer(scope, { _, source, _ ->
++            opened.add(source)
++            object : Decoder {
++                override val pcm = ByteArrayInputStream(ByteArray(32768))
++                override fun checkExit() {}
++                override fun close() { pcm.close() }
++            }
++        }, { SinkStub() }, { _, _, _ -> Metadata.Info(null, null, 1000) })
++        try { withTimeout(5000) { withContext(dispatcher) { block(player, opened) } } }
++        finally {
++            val closed = CompletableDeferred<Unit>()
++            withContext(dispatcher) { player.close { closed.complete(Unit) } }
++            withTimeout(5000) { closed.await() }; scope.cancel(); dispatcher.close()
++        }
++    }
++    private val a = PlayerTrack("/a", "A", durationMs = 1000, artwork = byteArrayOf())
++    private val b = PlayerTrack("/b", "B", durationMs = 1000, artwork = byteArrayOf())
++    @Test fun repeatOneRestartsDecoderAndManualNextStillWorks() = playerTest { p, opened ->
++        p.repeatMode = RepeatMode.ONE; p.play(a, listOf(a, b))
++        while (opened.size < 3) delay(10)
++        assertTrue(opened.all { it == a.source })
++        p.adjacent(1)
++        while (b.source !in opened) delay(10)
++        assertEquals(b.id, p.state.value.track?.id)
++    }
++    @Test fun offStopsAtEndAndAllWraps() = playerTest { p, opened ->
++        p.play(b, listOf(a, b))
++        while (p.state.value.phase != PlaybackPhase.ENDED) delay(10)
++        assertEquals(listOf(b.source), opened.toList())
++        p.repeatMode = RepeatMode.ALL; p.play(b)
++        while (a.source !in opened) delay(10)
++        assertTrue(a.source in opened)
++    }
++    @Test fun queueEditKeepsCurrentIdentityAndRestoresWithoutAutoplay() = playerTest { p, opened ->
++        p.restore(listOf(a, b), a.id, 500)
++        assertEquals(PlaybackPhase.IDLE, p.state.value.phase); assertTrue(opened.isEmpty())
++        assertEquals(500, p.progress.value.positionMs.toInt())
++        p.move(b.id, -1); assertEquals(listOf(b, a), p.queue)
++        assertEquals(a.id, p.state.value.track?.id)
++        p.enqueue(b, true); assertEquals(listOf(a, b), p.queue)
++        assertEquals(p.queue, p.queueState.value)
++    }
++    @Test fun shuffleOffDoesNotRepeatBeforeCompletingQueue() = playerTest { p, opened ->
++        val c = a.copy(source = "/c", title = "C")
++        p.shuffled = true; p.play(a, listOf(a, b, c))
++        while (p.state.value.phase != PlaybackPhase.ENDED) delay(10)
++        assertEquals(3, opened.size); assertEquals(3, opened.toSet().size)
++    }
++}
+--- 0.3.1/tools/check_desktop_source.py
++++ 0.3.2/tools/check_desktop_source.py
+@@ -9,6 +9,10 @@
+     def read(path): return (root / path).read_text(encoding='utf-8')
+     prefix = 'src/main/kotlin/app/ziziplayer/'
+     ui = read(prefix + 'desktop/ui/DesktopMain.kt')
++    model = read(prefix + 'desktop/ui/DesktopUi.kt')
++    store = read(prefix + 'desktop/LibraryStore.kt')
++    player = read(prefix + 'desktop/DesktopPlayer.kt')
++    offline = read(prefix + 'desktop/OfflineFiles.kt')
+     network = read(prefix + 'desktop/network/ZiziClient.kt')
+     bundled = read(prefix + 'desktop/network/BundledConnection.kt')
+     bridge = read(prefix + 'desktop/network/StreamBridge.kt')
+@@ -17,9 +21,17 @@
+         'matte UI has no gradient brush': 'Brush.verticalGradient' not in ui and 'private val Base = Color.Black' in ui,
+         'mobile surface, chip and text colors': all(x in ui for x in ('0xFF101010', '0xFF1B1B1B', '0xFFF6F7F8')),
+         'no server or bootstrap input in settings': 'Bootstrap-токен' not in ui and 'HTTPS-адрес сервера' not in ui and 'fun connect(' not in ui,
+-        'bundled client attached to player on startup': 'BundledConnection.load()' in ui and 'player.client = api' in ui,
++        'bundled client attached to player on startup': 'BundledConnection.load()' in model and 'player.client = api' in model,
+         'manual preference not used for bootstrap origin': 'DesktopPreferences.server' not in ui,
+         'audio settings do not replace network client': 's.audioSettings(executable)' in ui,
++        'settings hub replaces connection form': 'fun SettingsContent' in ui and 'fun SettingsDialog' not in ui,
++        'single serialized library writer': 'Channel<Write>' in model and 'for (first in writes)' in model,
++        'atomic replacement plus sync and backup': all(x in store for x in ('ATOMIC_MOVE', 'fd.sync()', 'library-v1.backup.json')),
++        'unknown schema remains read only': 'UnsupportedLibraryVersion' in store and 'writable = false' in store,
++        'repeat executes after decoder completion': 'if (repeatMode == RepeatMode.ONE) play(track) else adjacent(1)' in player,
++        'queue reorder observable and identity based': 'queueState: StateFlow' in player and 'fun move(id: String' in player,
++        'offline uses scoped transport and partial file': 'target.legacyOrigin' in offline and '.part' in offline and 'INCOMPLETE_DOWNLOAD' in offline,
++        'mobile DSP persistence codec': 'DspCodec.encode' in model and 'DspCodec.decode' in model,
+         'mobile search geometry': 'RoundedCornerShape(3.5.dp)' in ui and '49.5.dp' in ui and 'fontSize = 17.sp' in ui,
+         'mobile refresh motion': 'tween(900, easing = LinearEasing)' in ui and 'tween(340, easing = FastOutSlowInEasing)' in ui,
+         'authenticated redirects remain disabled': 'instanceFollowRedirects = false' in network,
+--- 0.3.1/upstream.json
++++ 0.3.2/upstream.json
+@@ -26,6 +26,10 @@
+     {
+       "path": "src/main/kotlin/app/ziziplayer/ui/SearchPresentation.kt",
+       "sha256": "f9113a50026a4cbf9fdd0f8b52aa405a31e71f752e0d61d60cc9f5369883d0eb"
++    },
++    {
++      "path": "src/main/java/app/ziziplayer/ui/theme/ArtworkColorMath.java",
++      "sha256": "304b6b81c232b2b4e7ac9ed2aad813d9381f3ecba74e182cd1eaaf6fdbd5c8cf"
+     }
+   ]
+ }
