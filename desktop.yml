@@ -1,0 +1,77 @@
+name: Build Zizi Desktop Windows preview (manual)
+
+# Start manually after merging this file into the default branch.
+# No automatic Release upload, no Android signing/resolver secrets.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zizi-desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Verify and extract desktop ZIP
+        run: python ci/extract_desktop.py
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+
+      - name: Install FFmpeg for integration tests (not bundled)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          choco install ffmpeg --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { throw 'FFmpeg installation failed' }
+          $exe = Get-ChildItem -Path "$env:ChocolateyInstall\lib\ffmpeg*\tools" -Filter ffmpeg.exe -Recurse |
+            Select-Object -First 1 -ExpandProperty FullName
+          if (-not $exe) { throw 'ffmpeg.exe not found in Chocolatey package' }
+          & $exe -version
+          if ($LASTEXITCODE -ne 0) { throw 'FFmpeg cannot start' }
+          "FFMPEG_PATH=$exe" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Required audio tests and Windows app-image
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $gradleExe = (Get-Command gradle.bat -ErrorAction Stop).Source
+          $gradleHome = Split-Path (Split-Path $gradleExe -Parent) -Parent
+          & "$env:DESKTOP_PROJECT/Build-Desktop.ps1" -Action package -GradleHome $gradleHome -FfmpegPath $env:FFMPEG_PATH
+
+      - name: Upload desktop test reports and build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ZiziDesktop-test-reports
+          path: |
+            _desktop-src/**/logs/desktop-build.txt
+            _desktop-src/**/build/reports/tests/
+            _desktop-src/**/build/test-results/
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Upload Windows app-image
+        uses: actions/upload-artifact@v4
+        with:
+          name: ZiziDesktop-Windows-x64-${{ env.DESKTOP_VERSION }}
+          path: _desktop-src/**/build/compose/binaries/main/app/ZiziDesktop/
+          if-no-files-found: error
+          retention-days: 30
