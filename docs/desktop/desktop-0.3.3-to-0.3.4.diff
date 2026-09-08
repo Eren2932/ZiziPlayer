@@ -1,0 +1,1585 @@
+--- a/README.md
++++ b/README.md
+@@ -1,29 +1,18 @@
+-# ZiziPlayer Desktop 0.3.3 preview — desktop UI rework
++# ZiziPlayer Desktop 0.3.4 preview
+ 
+-Исходники на основе актуального публичного snapshot `Eren2932/ZiziPlayer` — `1c8b4a4`, выбранный манифестом Desktop **0.3.2-preview**. Общая мобильная база остаётся **6.39.9**. Это кандидат для сборки и визуальной приёмки, **не готовый EXE и не подтверждённый pixel-perfect релиз**.
+ 
+-## Что изменилось
++Подготовлено на базе 0.3.3 и мобильных общих компонентов 6.39.9. Это пакет исходников для Windows CI, не проверенный бинарный релиз.
+ 
+-Настольная оболочка: центрированный поиск, отдельный выпадающий слой с историей/подсказками и настоящими треками, обложки и действия сохранения. Ввод от двух символов, debounce 320 мс, отмена и защита от устаревшего результата. Частичный ввод не пишет историю и не заменяет уже отправленный поиск. Стрелки выбирают, Enter открывает результат/запрос, Escape закрывает. Отдельный локальный фильтр медиатеки не отправляет сетевые запросы.
++Нижний плеер: собственный тонкий 4dp Slider, круглый hover/focus thumb, центр 700dp с дорожкой 606dp на широком окне, Play32, обложка56, компактная громкость/mute, панель гарнитуры. Таймер изолирован в SeekBar, проверка поколения перемотки сохранена и усилена.
+ 
+-Боковая медиатека показывает настоящие плейлисты, папки, избранное и локальных исполнителей. Есть фильтры, разворот в сетку/список, наведение, круглая форма исполнителей. Стрелка в медиатеке переключает полную панель/значки; иконка медиатеки в верхней строке полностью скрывает/возвращает её. Создание плейлиста, добавление файлов, папок и ссылки — через `+` в развёрнутой боковой панели. При пустой библиотеке нет демонстрационных коллекций.
++Панели: единый DesktopDock, устранён код подмены закрывающейся очереди эквалайзером; убраны конкурирующие анимации ширины. Геометрия переключается атомарно. Сохраняются вкладки/прокрутка, предыдущий режим левой панели.
+ 
+-Страница исполнителя/коллекции: горизонтальная шапка, большая обложка, крупный адаптивный заголовок, Oklch-тон из обложки **открытой страницы** и непрерывный градиент через действия к основной поверхности. Переключатель «Цвет из обложки» сохраняется. Плеер не перекрашивает открытого исполнителя. Компактный заголовок закрепляется при прокрутке; строки уплотнены, имеют номера, наведение и настоящие длительности, если известны. Добавлены настольные полосы прокрутки.
++Коллекции: обложка232, hero316, Play56, заголовок до96 с измерением текста, соседние Play/Shuffle; строки40/56dp. Артист получил первый блок из пяти треков и правую колонку локальной медиатеки. Градиент принадлежит всей прокручиваемой странице и доходит до первых строк.
+ 
+-Нижний плеер разделён на три зоны: трек/обложка слева, транспорт и шкала в центре, громкость/очередь/DSP справа. Прогресс, ползунок, основная кнопка воспроизведения и активные режимы используют фирменный **#F97316**, независимо от оттенка обложки. `Ctrl+Space` — воспроизведение/пауза; обычный пробел не перехватывается в полях ввода. При узком окне некоторые вспомогательные кнопки скрыты, основные транспортные действия доступны.
++Поиск: вкладка «Все», первый результат, треки и полки трёх типов коллекций, жанровые точки входа, собственная медиатека/избранное/история. Существующие endpoints, частичные результаты и отмена; без нового рекомендательного сервера. Длительность каталога читается из dur.
+ 
+-Очередь открывается кнопкой снизу справа и занимает собственную колонку, не закрывая контент. Очередь и эквалайзер используют одну правую область. Очередь позволяет выбрать трек, удалить и переместить через меню. «Выше в очереди» — позиции, **не история прослушивания**. При shuffle список также не выдаётся за будущий случайный порядок.
++Устройства: реальные Java Sound mixers, выбор выхода в сеансе, существующий handover для seekable трека, системные настройки Windows. Физическое имя default Bluetooth endpoint Java Sound может не раскрывать; Spotify Connect не имитируется.
+ 
+-## Сборка
++59 source contracts, Java math/layout, модель контраста и Python connection tests прошли. Восемь новых Kotlin/JUnit tests добавлены, но не запущены. Kotlin/Compose compilation, Windows render и audio-device acceptance требуют Actions и Windows. Полный pixel-perfect/безбаговость не заявляются.
+ 
+-Штатная связка сохранена: Kotlin 2.1.0, Compose 1.7.3, JDK 21, Gradle 8.11.1. `Build-Desktop.cmd -Action check` проверяет исходники/тесты; `Build-Desktop.cmd -Action package` запускает тесты и создаёт Windows app-image. Параметры подключения берутся из прежней конфигурации сборки, не вводи токены в исходники или чат. FFmpeg/FFprobe остаются внешними компонентами, сохранённый путь поддерживается.
+-
+-Для обновления GitHub используй внешний `ZiziDesktop-0.3.3-repo-update.zip` и инструкцию в его корне. Одного помещения ZIP в корень репозитория недостаточно. Самостоятельно push и Actions не выполнялись.
+-
+-## Ограничения
+-
+-Windows/Compose здесь не запускались; компиляция Kotlin и 10 добавленных Kotlin/JUnit-тестов ожидают CI. Проверки исходников и математики не заменяют рендер. Существующий аудиодвижок, сеть/авторизация, формат библиотеки и DSP сохранены побайтово. Android ZIP и сервер не изменялись.
+-
+-Нет новых fake-кнопок Spotify: подписок на исполнителей, клипов, совместных плейлистов, счётчиков прослушиваний, альбома/даты добавления там, где их нет в нашей модели. Сетевой popup показывает треки; отдельные альбомы/исполнители/плейлисты доступны в существующих вкладках полного поиска. Локальный исполнитель использует обложку его музыки, не выдуманный портрет. Режим боковой панели и открытость очереди пока сеансовые; сами данные очереди сохраняются прежним хранилищем.
+-
+-Известные ограничения 0.3.2 по облачной библиотеке, drag-and-drop, импорту мобильных плейлистов, quality policy, speed/pitch и системным медиаклавишам остаются. Подробности: `REVIEW_0.3.2.md` — исторический обзор базы; актуальные изменения: `REVIEW_0.3.3.md`, проверки: `VALIDATION.md`.
++Подробности: REVIEW_0.3.4.md, VALIDATION.md. Сборка через существующий Build-Desktop.ps1; инструкции обновления — во внешнем INSTALL_DESKTOP_0.3.4.md.
+--- /dev/null
++++ b/REVIEW_0.3.4.md
+@@ -0,0 +1,66 @@
++# Desktop 0.3.4 preview — разбор и границы проверки
++
++База — main публичного Eren2932/ZiziPlayer, полученный 8 сентября 2026, и выбранный desktop/current.json source ZIP 0.3.3-preview, SHA-256 `26abe655bbce1dfc728762a5cf1b8c6d711f639090041ac59c7466c6d2ee4305`. Архив main не содержит истории Git: commit SHA не устанавливался. Изучены актуальные desktop исходники, review/changelog 0.3.3, мобильные 6.39.9 changelog, поиск, AudioOutput, иконки, контракт каталога и палитра. Это не повторный аудит всего мобильного приложения.
++
++## Сравнение изображений
++
++Исходные полные скриншоты — 1920×1080. Чат показывает уменьшенные 1538×865 копии; измерять их как dp ошибочно. В начале были только Spotify-референсы; затем пользователь приложил реальный Zizi Desktop 0.3.3, плейлист Beat Trap Funk и исполнителя Massimo. Новая 0.3.4 здесь НЕ отрендерена. Колонка «0.3.4» означает параметры исходников, не результаты скриншотного теста.
++
++| Элемент | 0.3.3 / реальное изображение | Референс | 0.3.4, задано в коде |
++|---|---|---|---|
++| Дорожка прогресса | 16 px, y=1019…1034 | 4 px, y=1025…1028 | 4 dp; зона ввода 24 dp |
++| Бегунок | высокая вертикальная черта Material | круг при взаимодействии | круг 10 dp только hover/focus/drag |
++| Ширина дорожки | существенно растянута | 606 px, x=657…1262 | 606 dp на широком окне, центральная зона 700 dp |
++| Play снизу | 36 dp | около 32 px | 32 dp, фирменный оранжевый |
++| Обложка внизу | 54 dp | около 56 px | 56 dp; узкое окно 44 dp |
++| Обложка коллекции | 184 dp | около 232 px | 232 dp; узкое окно 160 dp |
++| Hero | минимум 252 dp + отдельная строка навигации | около 316 px | минимум 316 dp, назад перенесён наверх |
++| Главный заголовок | максимум 64 sp, эвристика по длине | крупный, около 96 px | до 96 sp, измерение TextMeasurer по реальной ширине |
++| Play коллекции | 52 dp | около 56 px | 56 dp |
++| Строка трека | обложка 36 dp, текст 14/12 sp | около 40 px, 16/14 px | обложка 40 dp, высота от 56 dp, текст 16/14 sp |
++
++У Zizi сохранена нативная Windows-рамка; у референса своя рамка. Это влияет на вертикальные координаты. DPI и шрифты требуют проверки новой Windows-сборки при 100/125/150%. Нет утверждения о pixel-perfect результате. Разные обложки Massimo/Zericxxn или Beat Trap Funk/ZELENUYU не подходят для оценки равенства конкретного оттенка.
++
++## Панели и управление
++
++Подтверждённая ошибка 0.3.3: внутри AnimatedVisibility при закрытии очереди queueOpen становился false и ветка else показывала EffectsPanel на время exit-анимации. Слева sideTarget сразу переключал структуру библиотеки, а animateDpAsState продолжал сжимать её ширину. На узком окне открытие правой панели одновременно запускало автосворачивание левой.
++
++Теперь один DesktopDock: NONE/QUEUE/EFFECTS/DEVICES. Изменения геометрии атомарные, без анимации ограничений ширины; это сознательное решение, а не обещание «улучшенной анимации». Нечему показывать DSP при закрытии очереди. SaveableStateProvider сохраняет табы/прокрутку; скрытие левой панели возвращает её предыдущий режим. Удалён недостижимый старый полноэкранный путь очереди. Реальный рендер быстрых переключений пока не проверен.
++
++ThinSlider не использует Material Slider. Дорожка белая в покое, фирменная оранжевая при взаимодействии; Play и активные режимы оранжевые. Есть мышь, клавиатура, Home/End, семантика accessibility, отмена незавершённого жеста. Seek проверяет trackId и generation и в прогрессе, и непосредственно перед командой. Таймер вынесен в SeekBar: позиция не является подпиской всей нижней панели. Громкость имеет mute с восстановлением уровня. Stop остаётся в раскрытом плеере.
++
++## Цвет и страницы
++
++Один кистевой градиент принадлежит прокручиваемой странице, не играющему треку. В него входят hero, действия, прозрачная незакреплённая шапка таблицы и первые строки. Конец: heroHeight + 244 dp. При закреплении таблица получает непрозрачную поверхность. Чтение scroll offset происходит в draw phase. Оригинальный mobile ArtworkColorMath, кэш, семафор и URL-проверки сохранены; новых запросов ради окраски нет.
++
++Chroma увеличена в 1.18 раза с потолком 0.22 вместо 0.15; светлота всё ещё 0.36…0.50. Нижние оттенки непрозрачные, затеняются в поверхность #101010. Контраст белого текста проверен независимой численной моделью; banding, FPS и скриншотный паритет не измерялись. Оттенок отсутствующей обложки нейтральный.
++
++Исполнитель: крупный круглый портрет, первые пять треков каталога, «Показать ещё», широкая правая колонка с реальными сохранёнными треками из загруженного набора. Нет вымышленных слушателей, прослушиваний или «Выбора исполнителя». Текущий API не предоставляет эти данные. Нет выдуманных альбомов или рекомендаций под видом ответа сервера.
++
++## Поиск
++
++Добавлены «Все», первый результат, треки и горизонтальные полки исполнителей/альбомов/плейлистов. Смешанный поиск использует четыре существующих запроса только после явной отправки; подсказки по-прежнему имеют debounce 320 мс и максимум шесть треков. Отмена распространяется через searchPart, а ошибка одной категории не уничтожает остальные. Поздние ответы защищены поколением. Пустой каталог показывает локальные совпадения.
++
++Стартовый экран содержит жанровые поисковые плитки, исполнителей из своей медиатеки, запросы и избранное. Это локально обоснованные точки входа, НЕ новый персональный рекомендательный алгоритм и не перенос всей mobile Discover API. История popup теперь имеет собственный заголовок и очистку. Прослушивание не сохраняет трек автоматически.
++
++Длительность из существующего поля каталога dur (секунды) теперь заполняет durationMs. Нулевые, отрицательные, слишком большие значения остаются неизвестными; они не подменяются придуманной длительностью.
++
++## Вывод звука
++
++Иконка Headphones взята из мобильной 6.39.9 без изменения её общего файла: при открытой панели — оранжевый цвет и точка снизу. Панель использует реальные Java Sound playback mixers, а не имитацию Spotify Connect. Список читается на IO, обновляется раз в пять секунд только при открытой панели. ActiveOutput публикуется лишь после успешного открытия Sink, закрытие старого Sink не сбрасывает новый.
++
++Для seekable проигрывания/паузы выбор выхода использует существующий сериализованный seek/handover с сохранением позиции/паузы. Возможен краткий разрыв звука; бесшовность не обещана. Для потока без перемотки/загрузки выбор действует со следующего открытия. Выбор хранится только в сеансе, формат библиотеки не менялся. При отключении выбранного устройства нужна явная смена; автоматического fallback нет.
++
++ВАЖНО: Java Sound может показывать только Primary Sound Driver/системный выход, не физическое имя Bluetooth-гарнитуры. При default-выходе честно написано «Системное устройство по умолчанию». Точное определение физического endpoint и события Windows Core Audio не реализованы. Wi-Fi Connect, трансляция на телефон и автоматическое Bluetooth-подключение не реализованы. Есть кнопка системных настроек звука Windows. В этой среде устройства и переключение на Windows не проверялись.
++
++## Неизменяемые части
++
++Байтово сохранены DesktopPlayer, Sink/JavaSoundSink, Engine, Decoder, DSP, LibraryStore, OfflineFiles, все семь upstream файлов, мобильный ZIP и workflows. DesktopUi теперь передаёт новый провайдер выхода; это реальное изменение wiring аудиовыхода, хотя сам движок не переписан. В сетевом клиенте изменён только разбор dur, endpoints/авторизация/транспорт неизменны. Зависимости не добавлены.
++
++## Приёмка в Windows
++
++Сначала обязателен успешный существующий Actions workflow с Kotlin/Compose compilation, JUnit/audio tests и упаковкой. После этого проверить 960×680, 1280×800, 1440×900 и полноэкранное окно; DPI 100/125/150%. Переключить каждую пару dock-состояний и скрывать/сворачивать библиотеку, в том числе при скролле и длинных заголовках. Проверить паузу/следующий трек во время seek, отпускание мыши вне дорожки, Tab/стрелки/Home/End, mute/restart, быстрое закрытие приложения.
++
++Для выхода: default, проводные/USB/Bluetooth, смена в паузе и на ходу, отключение выбранного устройства, отсутствующий драйвер, ошибка открытия. Для поиска: быстрый ввод и смена запроса, очистка/отмена, offline, частичный отказ одной категории, загрузка следующих страниц. Для оформления: красная/синяя/монохромная/отсутствующая обложка и смена играющего трека при открытой чужой коллекции.
++
++Сравнивать новые скриншоты 0.3.4 с референсом при одинаковом масштабе. Полный Windows render и отсутствие визуальных регрессий пока НЕ подтверждены.
+--- a/VALIDATION.md
++++ b/VALIDATION.md
+@@ -1,31 +1,14 @@
+-# Проверки Desktop 0.3.3 preview
++# Проверки Desktop 0.3.4 preview
+ 
+-Проверки выполнены в the Computer. Это **проверка исходников и доступной JVM-математики**, не Windows/Compose-сборка.
++Выполнены на the Computer без Gradle/Compose зависимостей:
+ 
+-## Выполнено
++- 59 статических source contracts, включая семь upstream SHA-256.
++- Проверка скобок/строк/комментариев Kotlin: 0 файлов с проблемами. Это НЕ компилятор.
++- Реальное исполнение Java production math: 19 сценариев, цветовые/случайные выборки.
++- Реальное исполнение Java production layout: 17 286 конфигураций, плюс размеры hero/прогресса.
++- Независимая модель 4096 цветов: минимальный контраст #F6F7F8 к новому solid header ~5.221:1.
++- 9 Python-тестов безопасного подключения — прошли.
+ 
+-- Распакован свежий GitHub snapshot `1c8b4a4`, сверена SHA-256 выбранного 0.3.2 source ZIP.
+-- 19 существующих Java-сценариев оригинальной математики обложек выполнены на JDK 21, включая 4096 цветов и детерминированные случайные выборки.
+-- **17 286** конфигураций production `DesktopLayout.java` выполнены на JVM: ширины 960…3840 dp, три режима медиатеки, с/без правой панели; границы поиска, ширина контента, сетка и пространство заголовка. Это проверки формул для конечных состояний, не размеров текста/кадров анимации Compose.
+-- 45 статических source contracts прошли; 7 общих файлов 6.39.9 сохраняют SHA-256. Обновлены два устаревших контракта: запрет градиента и мобильная геометрия поиска заменены новыми настольными требованиями, а не просто удалены.
+-- 9 существующих Python-тестов конфигурации подключения прошли.
+-- Проверка разделителей Kotlin: 0 файлов с найденными проблемами. Это не компилятор.
+-- Все используемые имена иконок существуют.
+-- Независимая Python-модель Oklch на сетке 4096 цветов: минимальный контраст непрозрачного #F6F7F8 к верхнему тону ≈ **5.23:1**. Первоначальная граница L=0.54 дала 4.405:1 и была исправлена на 0.50; прозрачность подзаголовка убрана. Это модель численных формул; настоящий Kotlin-тест добавлен в CI.
+-- Побайтово сверены неизменность движка, декодера, sink, сети/авторизации, офлайн-загрузчика, формата библиотеки, метаданных и DSP относительно 0.3.2.
++Добавлены восемь Kotlin/JUnit-тестов (семь DesktopRefinementTest и один CatalogBrowseTest). Они НЕ запускались здесь. Существующие Kotlin/audio tests также не запускались. Java-проверки не проверяют Compose layout или Kotlin API compatibility.
+ 
+-## Добавлено для CI, здесь НЕ запускалось
+-
+-10 Kotlin/JUnit-тестов: 5 для геометрии/контраста/монохромного fallback/подсказок и 5 для debounce, старого неотменяемого ответа, закрытия popup, границы/дубликатов, offline/error. Существующие Kotlin-тесты сохранены. Тест geometry в CI повторяет Java-прогон. Штатный workflow выполняет `test` до `createDistributable`.
+-
+-## Не проверено
+-
+-Kotlin 2.1/Compose 1.7.3 compilation, JUnit Kotlin suite, Windows app-image/EXE, реальный рендер/DPI/наведение/клавиатура, живой VPS, сетевое проигрывание, реальные быстрые пользовательские жесты, FPS/banding, пиксельное наложение Zizi на референсы. Не установлены Gradle/Compose-зависимости; новые пакеты в этой среде не устанавливались. Actions и git push не запускались.
+-
+-## Повторяемые локальные проверки
+-
+-При наличии JDK 21: `java tools/RunZiziChecks.java .` — Java production checks через JDK compiler API, без Gradle.
+-
+-`DESKTOP_PROJECT=<путь> python tools/check_desktop_source.py` и `python tools/check_kotlin_syntax.py .` — статические проверки. `python tools/check_header_contrast_model.py` — независимая численная модель (NumPy).
+-
+-Финальные проверки манифеста, структуры source ZIP и безопасного извлечения отражены в `docs/desktop/VALIDATION_0.3.3.txt` внешнего repo-update пакета.
++Windows EXE не собран; реальный рендер, pointer input, hotplug и переключение гарнитуры на Windows не испытаны. Никаких новых зависимостей не установлено. Финальная проверка ZIP/hash/extract — во внешнем docs/desktop/VALIDATION_0.3.4.txt.
+--- a/build.gradle.kts
++++ b/build.gradle.kts
+@@ -6,7 +6,7 @@
+     id("org.jetbrains.compose") version "1.7.3"
+ }
+ group = "app.ziziplayer.desktop"
+-version = "0.3.3"
++version = "0.3.4"
+ kotlin { jvmToolchain(21) }
+ dependencies {
+     implementation(compose.desktop.currentOs)
+@@ -26,7 +26,7 @@
+         mainClass = "app.ziziplayer.desktop.ui.DesktopMainKt"
+         nativeDistributions {
+             packageName = "ZiziDesktop"
+-            packageVersion = "0.3.3"
++            packageVersion = "0.3.4"
+             includeAllModules = true
+         }
+     }
+--- /dev/null
++++ b/docs/legacy/from-0.3.3-README.md
+@@ -0,0 +1,29 @@
++# ZiziPlayer Desktop 0.3.3 preview — desktop UI rework
++
++Исходники на основе актуального публичного snapshot `Eren2932/ZiziPlayer` — `1c8b4a4`, выбранный манифестом Desktop **0.3.2-preview**. Общая мобильная база остаётся **6.39.9**. Это кандидат для сборки и визуальной приёмки, **не готовый EXE и не подтверждённый pixel-perfect релиз**.
++
++## Что изменилось
++
++Настольная оболочка: центрированный поиск, отдельный выпадающий слой с историей/подсказками и настоящими треками, обложки и действия сохранения. Ввод от двух символов, debounce 320 мс, отмена и защита от устаревшего результата. Частичный ввод не пишет историю и не заменяет уже отправленный поиск. Стрелки выбирают, Enter открывает результат/запрос, Escape закрывает. Отдельный локальный фильтр медиатеки не отправляет сетевые запросы.
++
++Боковая медиатека показывает настоящие плейлисты, папки, избранное и локальных исполнителей. Есть фильтры, разворот в сетку/список, наведение, круглая форма исполнителей. Стрелка в медиатеке переключает полную панель/значки; иконка медиатеки в верхней строке полностью скрывает/возвращает её. Создание плейлиста, добавление файлов, папок и ссылки — через `+` в развёрнутой боковой панели. При пустой библиотеке нет демонстрационных коллекций.
++
++Страница исполнителя/коллекции: горизонтальная шапка, большая обложка, крупный адаптивный заголовок, Oklch-тон из обложки **открытой страницы** и непрерывный градиент через действия к основной поверхности. Переключатель «Цвет из обложки» сохраняется. Плеер не перекрашивает открытого исполнителя. Компактный заголовок закрепляется при прокрутке; строки уплотнены, имеют номера, наведение и настоящие длительности, если известны. Добавлены настольные полосы прокрутки.
++
++Нижний плеер разделён на три зоны: трек/обложка слева, транспорт и шкала в центре, громкость/очередь/DSP справа. Прогресс, ползунок, основная кнопка воспроизведения и активные режимы используют фирменный **#F97316**, независимо от оттенка обложки. `Ctrl+Space` — воспроизведение/пауза; обычный пробел не перехватывается в полях ввода. При узком окне некоторые вспомогательные кнопки скрыты, основные транспортные действия доступны.
++
++Очередь открывается кнопкой снизу справа и занимает собственную колонку, не закрывая контент. Очередь и эквалайзер используют одну правую область. Очередь позволяет выбрать трек, удалить и переместить через меню. «Выше в очереди» — позиции, **не история прослушивания**. При shuffle список также не выдаётся за будущий случайный порядок.
++
++## Сборка
++
++Штатная связка сохранена: Kotlin 2.1.0, Compose 1.7.3, JDK 21, Gradle 8.11.1. `Build-Desktop.cmd -Action check` проверяет исходники/тесты; `Build-Desktop.cmd -Action package` запускает тесты и создаёт Windows app-image. Параметры подключения берутся из прежней конфигурации сборки, не вводи токены в исходники или чат. FFmpeg/FFprobe остаются внешними компонентами, сохранённый путь поддерживается.
++
++Для обновления GitHub используй внешний `ZiziDesktop-0.3.3-repo-update.zip` и инструкцию в его корне. Одного помещения ZIP в корень репозитория недостаточно. Самостоятельно push и Actions не выполнялись.
++
++## Ограничения
++
++Windows/Compose здесь не запускались; компиляция Kotlin и 10 добавленных Kotlin/JUnit-тестов ожидают CI. Проверки исходников и математики не заменяют рендер. Существующий аудиодвижок, сеть/авторизация, формат библиотеки и DSP сохранены побайтово. Android ZIP и сервер не изменялись.
++
++Нет новых fake-кнопок Spotify: подписок на исполнителей, клипов, совместных плейлистов, счётчиков прослушиваний, альбома/даты добавления там, где их нет в нашей модели. Сетевой popup показывает треки; отдельные альбомы/исполнители/плейлисты доступны в существующих вкладках полного поиска. Локальный исполнитель использует обложку его музыки, не выдуманный портрет. Режим боковой панели и открытость очереди пока сеансовые; сами данные очереди сохраняются прежним хранилищем.
++
++Известные ограничения 0.3.2 по облачной библиотеке, drag-and-drop, импорту мобильных плейлистов, quality policy, speed/pitch и системным медиаклавишам остаются. Подробности: `REVIEW_0.3.2.md` — исторический обзор базы; актуальные изменения: `REVIEW_0.3.3.md`, проверки: `VALIDATION.md`.
+--- /dev/null
++++ b/docs/legacy/from-0.3.3-VALIDATION.md
+@@ -0,0 +1,31 @@
++# Проверки Desktop 0.3.3 preview
++
++Проверки выполнены в the Computer. Это **проверка исходников и доступной JVM-математики**, не Windows/Compose-сборка.
++
++## Выполнено
++
++- Распакован свежий GitHub snapshot `1c8b4a4`, сверена SHA-256 выбранного 0.3.2 source ZIP.
++- 19 существующих Java-сценариев оригинальной математики обложек выполнены на JDK 21, включая 4096 цветов и детерминированные случайные выборки.
++- **17 286** конфигураций production `DesktopLayout.java` выполнены на JVM: ширины 960…3840 dp, три режима медиатеки, с/без правой панели; границы поиска, ширина контента, сетка и пространство заголовка. Это проверки формул для конечных состояний, не размеров текста/кадров анимации Compose.
++- 45 статических source contracts прошли; 7 общих файлов 6.39.9 сохраняют SHA-256. Обновлены два устаревших контракта: запрет градиента и мобильная геометрия поиска заменены новыми настольными требованиями, а не просто удалены.
++- 9 существующих Python-тестов конфигурации подключения прошли.
++- Проверка разделителей Kotlin: 0 файлов с найденными проблемами. Это не компилятор.
++- Все используемые имена иконок существуют.
++- Независимая Python-модель Oklch на сетке 4096 цветов: минимальный контраст непрозрачного #F6F7F8 к верхнему тону ≈ **5.23:1**. Первоначальная граница L=0.54 дала 4.405:1 и была исправлена на 0.50; прозрачность подзаголовка убрана. Это модель численных формул; настоящий Kotlin-тест добавлен в CI.
++- Побайтово сверены неизменность движка, декодера, sink, сети/авторизации, офлайн-загрузчика, формата библиотеки, метаданных и DSP относительно 0.3.2.
++
++## Добавлено для CI, здесь НЕ запускалось
++
++10 Kotlin/JUnit-тестов: 5 для геометрии/контраста/монохромного fallback/подсказок и 5 для debounce, старого неотменяемого ответа, закрытия popup, границы/дубликатов, offline/error. Существующие Kotlin-тесты сохранены. Тест geometry в CI повторяет Java-прогон. Штатный workflow выполняет `test` до `createDistributable`.
++
++## Не проверено
++
++Kotlin 2.1/Compose 1.7.3 compilation, JUnit Kotlin suite, Windows app-image/EXE, реальный рендер/DPI/наведение/клавиатура, живой VPS, сетевое проигрывание, реальные быстрые пользовательские жесты, FPS/banding, пиксельное наложение Zizi на референсы. Не установлены Gradle/Compose-зависимости; новые пакеты в этой среде не устанавливались. Actions и git push не запускались.
++
++## Повторяемые локальные проверки
++
++При наличии JDK 21: `java tools/RunZiziChecks.java .` — Java production checks через JDK compiler API, без Gradle.
++
++`DESKTOP_PROJECT=<путь> python tools/check_desktop_source.py` и `python tools/check_kotlin_syntax.py .` — статические проверки. `python tools/check_header_contrast_model.py` — независимая численная модель (NumPy).
++
++Финальные проверки манифеста, структуры source ZIP и безопасного извлечения отражены в `docs/desktop/VALIDATION_0.3.3.txt` внешнего repo-update пакета.
+--- a/src/main/java/app/ziziplayer/desktop/ui/DesktopLayout.java
++++ b/src/main/java/app/ziziplayer/desktop/ui/DesktopLayout.java
+@@ -3,12 +3,15 @@
+ /** Logical Compose dp, not screenshot pixels. Kept pure for real JVM geometry checks. */
+ public final class DesktopLayout {
+     private DesktopLayout() {}
++    public static float transportWidth(float width) { return Math.min(700f, width * .42f); }
+     public static float searchWidth(float width) { return Math.min(480f, Math.max(0f, width - 24f) * .46f); }
+     public static float sidebarWidth(float width, int mode, boolean rightOpen) {
+         if (mode == 0) return 0f;
+         return mode == 1 || (width < 1180f && rightOpen) ? 64f : 300f;
+     }
+     public static float rightWidth(float width) { return width < 1180f ? 280f : 330f; }
++    public static float heroArtwork(float width) { return width < 680f ? 160f : 232f; }
++    public static float heroHeight(float width) { return width < 680f ? 252f : 316f; }
+     public static int columns(float width) { return Math.max(1, (int)(width / 168f)); }
+     public static float artworkSize(float width, int columns) {
+         if (columns < 1) throw new IllegalArgumentException("columns");
+--- /dev/null
++++ b/src/main/kotlin/app/ziziplayer/desktop/AudioOutputs.kt
+@@ -0,0 +1,48 @@
++package app.ziziplayer.desktop
++
++import java.util.concurrent.atomic.AtomicLong
++import javax.sound.sampled.*
++import kotlinx.coroutines.flow.MutableStateFlow
++import kotlinx.coroutines.flow.asStateFlow
++
++internal data class OutputDevice(val id: String, val name: String)
++internal data class ActiveOutput(val name: String, val selectedId: String?, val token: Long)
++
++/** Java Sound exposes playback mixers, NOT Bluetooth discovery or Spotify Connect.
++ * Enumeration never opens lines. A route becomes active only after Sink construction succeeds.
++ * Default/primary drivers may conceal the physical endpoint: never guess a headset name.
++ */
++internal class AudioOutputs {
++    @Volatile var selectedId: String? = null; private set
++    private val serial = AtomicLong()
++    private val mutableActive = MutableStateFlow<ActiveOutput?>(null)
++    val active = mutableActive.asStateFlow()
++    private fun id(info: Mixer.Info): String = listOf(info.name, info.vendor, info.description, info.version).joinToString("|")
++    private fun lineInfo() = DataLine.Info(SourceDataLine::class.java, AudioFormat(Pcm.RATE.toFloat(), 16, Pcm.CHANNELS, true, false))
++    fun devices(): List<OutputDevice> = AudioSystem.getMixerInfo().mapNotNull { info ->
++        runCatching { if (AudioSystem.getMixer(info).isLineSupported(lineInfo())) OutputDevice(id(info), info.name) else null }.getOrNull()
++    }.distinctBy { it.id }
++    fun select(device: OutputDevice?) { selectedId = device?.id }
++    fun createSink(): Sink {
++        val requested = selectedId
++        var name = "Системное устройство по умолчанию"
++        val sink = JavaSoundSink(160) { format ->
++            val info = DataLine.Info(SourceDataLine::class.java, format)
++            if (requested == null) AudioSystem.getLine(info) as SourceDataLine
++            else {
++                val mixerInfo = AudioSystem.getMixerInfo().firstOrNull { id(it) == requested }
++                    ?: throw IllegalStateException("AUDIO_OUTPUT_DISCONNECTED")
++                name = mixerInfo.name
++                AudioSystem.getMixer(mixerInfo).getLine(info) as SourceDataLine
++            }
++        }
++        val route = ActiveOutput(name, requested, serial.incrementAndGet())
++        mutableActive.value = route
++        return object : Sink by sink {
++            override fun close() {
++                try { sink.close() } finally { mutableActive.compareAndSet(route, null) }
++            }
++            override fun interrupt() { close() }
++        }
++    }
++}
+--- a/src/main/kotlin/app/ziziplayer/desktop/network/ZiziClient.kt
++++ b/src/main/kotlin/app/ziziplayer/desktop/network/ZiziClient.kt
+@@ -127,6 +127,7 @@
+             val row = items.getJSONObject(index); val id = row.optString("id")
+             if (!id.matches(Regex("[0-9]{1,20}")) || row.optString("src", "deezer") != "deezer") null
+             else PlayerTrack("zizi://dz/$id", row.optString("title", "Без названия"), row.optString("artist"),
++                durationMs = row.optLong("dur", 0).takeIf { it in 1..604800 }?.times(1000),
+                 artworkUrl = row.optString("art").takeIf { it.isNotBlank() && it != "null" },
+                 artistId = row.optString("artist_id").takeIf { it.matches(Regex("[0-9]{1,20}")) })
+         }.distinctBy { it.id }
+--- a/src/main/kotlin/app/ziziplayer/desktop/ui/ArtworkPalette.kt
++++ b/src/main/kotlin/app/ziziplayer/desktop/ui/ArtworkPalette.kt
+@@ -137,7 +137,7 @@
+ internal fun collectionTone(primary: Int?): Color {
+     if (primary == null) return Color(0xFF424242)
+     val lch = Color(primary).toOklch()
+-    return oklch(lch[0].coerceIn(.36f, .50f), lch[1].coerceAtMost(.15f), lch[2])
++    return oklch(lch[0].coerceIn(.36f, .50f), (lch[1] * 1.18f).coerceAtMost(.22f), lch[2])
+ }
+ @Composable internal fun animatedCollectionTone(target: Color): Color {
+     val progress = remember { Animatable(1f) }
+@@ -149,3 +149,10 @@
+     }
+     return blendOklch(from, to, progress.value)
+ }
++
++/** Opaque sRGB shading into the page surface: saturation is not diluted by alpha compositing. */
++internal fun shadeCollectionTone(tone: Color, amount: Float): Color {
++    val base = 16f / 255f
++    val a = amount.coerceIn(0f, 1f)
++    return Color(base + (tone.red - base) * a, base + (tone.green - base) * a, base + (tone.blue - base) * a)
++}
+--- /dev/null
++++ b/src/main/kotlin/app/ziziplayer/desktop/ui/DesktopDock.kt
+@@ -0,0 +1,9 @@
++package app.ziziplayer.desktop.ui
++
++/** One target, no competing booleans and no outgoing queue replaced by DSP mid-exit.
++ * Geometry changes atomically: animating constraints caused text reflow and grid oscillation.
++ */
++internal enum class DesktopDock {
++    NONE, QUEUE, EFFECTS, DEVICES;
++    fun toggle(panel: DesktopDock): DesktopDock = if (this == panel) NONE else panel
++}
+--- /dev/null
++++ b/src/main/kotlin/app/ziziplayer/desktop/ui/DesktopIcons.kt
+@@ -0,0 +1,30 @@
++package app.ziziplayer.desktop.ui
++
++import androidx.compose.ui.graphics.Color
++import androidx.compose.ui.graphics.SolidColor
++import androidx.compose.ui.graphics.StrokeCap
++import androidx.compose.ui.graphics.StrokeJoin
++import androidx.compose.ui.graphics.vector.ImageVector
++import androidx.compose.ui.graphics.vector.path
++import androidx.compose.ui.unit.dp
++
++/** Desktop-only glyphs; shared mobile vectors remain byte-identical. */
++internal object DesktopIcons {
++    val Volume = ImageVector.Builder("desktop_volume", 24.dp, 24.dp, 24f, 24f).apply {
++        path(fill = null, stroke = SolidColor(Color.White), strokeLineWidth = 1.7f,
++            strokeLineCap = StrokeCap.Round, strokeLineJoin = StrokeJoin.Round) {
++            moveTo(13f, 3f); lineTo(5f, 8f); lineTo(2f, 9f); lineTo(2f, 15f)
++            lineTo(5f, 16f); lineTo(13f, 21f); close()
++            moveTo(13f, 3f); lineTo(13f, 21f)
++            moveTo(17f, 7f); curveTo(22.5f, 9.5f, 22.5f, 14.5f, 17f, 17f)
++        }
++    }.build()
++    val Muted = ImageVector.Builder("desktop_muted", 24.dp, 24.dp, 24f, 24f).apply {
++        path(fill = null, stroke = SolidColor(Color.White), strokeLineWidth = 1.7f,
++            strokeLineCap = StrokeCap.Round, strokeLineJoin = StrokeJoin.Round) {
++            moveTo(13f, 3f); lineTo(5f, 8f); lineTo(2f, 9f); lineTo(2f, 15f)
++            lineTo(5f, 16f); lineTo(13f, 21f); close()
++            moveTo(18f, 9f); lineTo(23f, 15f); moveTo(23f, 9f); lineTo(18f, 15f)
++        }
++    }.build()
++}
+--- a/src/main/kotlin/app/ziziplayer/desktop/ui/DesktopMain.kt
++++ b/src/main/kotlin/app/ziziplayer/desktop/ui/DesktopMain.kt
+@@ -2,15 +2,10 @@
+ 
+ package app.ziziplayer.desktop.ui
+ 
+-import androidx.compose.animation.AnimatedVisibility
+ import androidx.compose.animation.core.Animatable
+ import androidx.compose.animation.core.FastOutSlowInEasing
+ import androidx.compose.animation.core.LinearEasing
+ import androidx.compose.animation.core.tween
+-import androidx.compose.animation.fadeIn
+-import androidx.compose.animation.fadeOut
+-import androidx.compose.animation.expandHorizontally
+-import androidx.compose.animation.shrinkHorizontally
+ import androidx.compose.foundation.text.BasicTextField
+ import androidx.compose.foundation.border
+ import androidx.compose.foundation.hoverable
+@@ -23,7 +18,6 @@
+ import androidx.compose.foundation.VerticalScrollbar
+ import androidx.compose.foundation.rememberScrollbarAdapter
+ import androidx.compose.foundation.lazy.itemsIndexed
+-import androidx.compose.animation.core.animateDpAsState
+ import androidx.compose.ui.graphics.Brush
+ import androidx.compose.ui.platform.LocalDensity
+ import androidx.compose.ui.unit.IntOffset
+@@ -32,6 +26,7 @@
+ import androidx.compose.ui.graphics.SolidColor
+ import androidx.compose.ui.graphics.graphicsLayer
+ import androidx.compose.ui.platform.LocalFocusManager
++import androidx.compose.ui.text.rememberTextMeasurer
+ import androidx.compose.ui.text.TextStyle
+ import androidx.compose.ui.text.buildAnnotatedString
+ import androidx.compose.ui.text.SpanStyle
+@@ -48,9 +43,15 @@
+ import androidx.compose.foundation.verticalScroll
+ import androidx.compose.material3.*
+ import androidx.compose.runtime.*
++import androidx.compose.runtime.saveable.rememberSaveable
++import androidx.compose.runtime.saveable.rememberSaveableStateHolder
+ import androidx.compose.ui.Alignment
+ import androidx.compose.ui.Modifier
+ import androidx.compose.ui.draw.clip
++import androidx.compose.ui.draw.clipToBounds
++import androidx.compose.ui.draw.drawWithCache
++import androidx.compose.ui.geometry.Size
++import androidx.compose.ui.graphics.drawscope.translate
+ import androidx.compose.ui.focus.onFocusChanged
+ import androidx.compose.ui.graphics.Color
+ import androidx.compose.ui.graphics.ImageBitmap
+@@ -206,7 +207,7 @@
+         val ui = remember { DesktopUi(scope, store, snapshot) }
+         var closing by remember { mutableStateOf(false) }
+         Window(onCloseRequest = { if (!closing) { closing = true; ui.shutdown(done = { exitApplication() }, failed = { closing = false }) } },
+-            title = "ZiziPlayer · Desktop 0.3.3 preview", state = rememberWindowState(width = 1440.dp, height = 850.dp)) {
++            title = "ZiziPlayer · Desktop 0.3.4 preview", state = rememberWindowState(width = 1440.dp, height = 850.dp)) {
+             LaunchedEffect(Unit) { window.minimumSize = java.awt.Dimension(960, 680) }
+             val state by ui.player.state.collectAsState()
+             // Retain previous palette while the next cover decodes; obsolete loads cannot publish.
+@@ -231,20 +232,20 @@
+ 
+ @Composable private fun DesktopContent(s: DesktopUi, closing: Boolean) {
+     val state by s.player.state.collectAsState()
+-    val queue by s.player.queueState.collectAsState()
+     var page by remember { mutableStateOf("Медиатека") }
+     var detail by remember { mutableStateOf<LibraryCard?>(null) }
+     var query by remember { mutableStateOf("") }
+     var submitted by remember { mutableStateOf(false) }
+     var sourceDialog by remember { mutableStateOf(false) }
+-    var effects by remember { mutableStateOf(false) }
++    var dock by remember { mutableStateOf(DesktopDock.NONE) }
++    val panelStates = rememberSaveableStateHolder()
+     var expanded by remember { mutableStateOf(false) }
+     var editing by remember { mutableStateOf(false) }
+     var searchText by remember { mutableStateOf("") }
+     var suggestionsOpen by remember { mutableStateOf(false) }
+     var suggestionIndex by remember { mutableStateOf(-1) }
+-    var sidebarMode by remember { mutableStateOf(2) } // 2: library, 1: icon rail, 0: hidden
+-    var queueOpen by remember { mutableStateOf(false) }
++    var lastVisibleSidebar by rememberSaveable { mutableStateOf(2) }
++    var sidebarMode by rememberSaveable { mutableStateOf(2) } // 2: library, 1: icon rail, 0: hidden
+     var libraryFilter by remember { mutableStateOf("Все") }
+     var playlistDialog by remember { mutableStateOf(false) }
+     val focus = LocalFocusManager.current
+@@ -297,8 +298,7 @@
+     LaunchedEffect(completions, previewMatches) { suggestionIndex = -1 }
+     BoxWithConstraints(Modifier.fillMaxSize()) {
+     val searchWidth = DesktopLayout.searchWidth(maxWidth.value).dp
+-    val sideTarget = DesktopLayout.sidebarWidth(maxWidth.value, sidebarMode, queueOpen || effects).dp
+-    val sideWidth by animateDpAsState(sideTarget, tween(220))
++    val sideWidth = DesktopLayout.sidebarWidth(maxWidth.value, sidebarMode, dock != DesktopDock.NONE).dp
+     val rightWidth = DesktopLayout.rightWidth(maxWidth.value).dp
+     Column(Modifier.fillMaxSize().onPreviewKeyEvent {
+         if (!closing && it.isCtrlPressed && it.key == Key.Spacebar && it.type == KeyEventType.KeyDown) {
+@@ -307,13 +307,16 @@
+     }) {
+         Box(Modifier.fillMaxWidth().height(60.dp).padding(horizontal = 12.dp)) {
+             Row(Modifier.align(Alignment.CenterStart), verticalAlignment = Alignment.CenterVertically) {
+-                IconButton(onClick = { sidebarMode = if (sidebarMode == 0) 2 else 0 }) { Icon(ZiziIcons.Library,
++                IconButton(onClick = { if (sidebarMode == 0) sidebarMode = lastVisibleSidebar else { lastVisibleSidebar = sidebarMode; sidebarMode = 0 } }) { Icon(ZiziIcons.Library,
+                     if (sidebarMode == 0) "Показать медиатеку" else "Скрыть медиатеку", tint = if (sidebarMode == 0) Muted else Brand) }
++                if (detail != null || s.openPage != null) IconButton(onClick = {
++                    if (s.openPage != null) s.closePage() else { detail = null; query = "" }
++                }) { Icon(ZiziIcons.ArrowBack, "Назад", tint = Muted) }
+                 TextButton(onClick = { navigate("Медиатека") }) { Text("Zizi", color = Ink, fontSize = 21.sp, fontWeight = FontWeight.Black) }
+             }
+             Box(Modifier.align(Alignment.Center).width(searchWidth)) {
+                 DesktopSearchField(searchText, {
+-                    searchText = it; suggestionIndex = -1; suggestionsOpen = true; s.preview(it)
++                    searchText = it.take(300); suggestionIndex = -1; suggestionsOpen = true; s.preview(searchText)
+                 }, onSubmit = ::activateSuggestion, onFocus = {
+                     editing = it
+                     if (it) { suggestionsOpen = true; s.preview(searchText) }
+@@ -336,10 +339,10 @@
+             IconButton(onClick = { navigate("Настройки") }, modifier = Modifier.align(Alignment.CenterEnd)) { Icon(ZiziIcons.Tune, "Настройки") }
+         }
+         Row(Modifier.weight(1f).padding(horizontal = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+-            if (sideWidth > 0.dp) LibrarySidebar(s, libraryCards, page, detail?.key,
+-                collapsed = sideTarget <= 64.dp, modifier = Modifier.width(sideWidth).fillMaxHeight(),
++            if (sideWidth > 0.dp) panelStates.SaveableStateProvider("library") { LibrarySidebar(s, libraryCards, page, detail?.key,
++                collapsed = sideWidth <= 64.dp, modifier = Modifier.width(sideWidth).fillMaxHeight(),
+                 onCollapse = { sidebarMode = if (sidebarMode == 2) 1 else 2 }, onNavigate = ::navigate,
+-                onCard = ::openCard, onCreate = { playlistDialog = true }, onSource = { sourceDialog = true }, closing = closing)
++                onCard = ::openCard, onCreate = { playlistDialog = true }, onSource = { sourceDialog = true }, closing = closing) }
+             Column(Modifier.weight(1f).fillMaxHeight().clip(RoundedCornerShape(8.dp)).background(Panel).padding(horizontal = if (detail != null || s.openPage != null) 0.dp else 20.dp, vertical = 0.dp)) {
+                 if (!s.store.writable) Text("Библиотека доступна только для чтения. Изменения этого сеанса не сохранятся.", color = Brand, modifier = Modifier.padding(bottom = 12.dp))
+                 if (s.notice.isNotEmpty()) Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(Chip).padding(10.dp),
+@@ -352,45 +355,52 @@
+                 }
+                 val remote = s.openPage
+                 if (remote != null) {
+-                    Row(verticalAlignment = Alignment.CenterVertically) {
+-                        IconButton(onClick = s::closePage) { Icon(ZiziIcons.ArrowBack, "Назад") }
+-                        Text(if (remote.collection.kind == "artist") "Исполнитель" else if (remote.collection.kind == "album") "Альбом" else "Плейлист",
+-                            color = Muted, modifier = Modifier.weight(1f))
+-                        IconButton(onClick = { effects = !effects; if (effects) queueOpen = false }) { Icon(ZiziIcons.Equalizer, "Эквалайзер") }
+-                    }
++                    var showAllArtist by rememberSaveable(remote.collection.key) { mutableStateOf(false) }
+                     val remoteListState = rememberLazyListState()
+                     LaunchedEffect(remote.collection.key) { remoteListState.scrollToItem(0) }
+                     val remoteCollapsed by remember { derivedStateOf { remoteListState.firstVisibleItemIndex > 0 } }
+-                    ScrollList(Modifier.weight(1f), state = remoteListState) {
++                    ScrollList(Modifier.weight(1f).then(collectionBackground(remote.collection.artworkTrack(), s, remoteListState)), state = remoteListState) {
+                         item {
+                             CollectionHero(remote.collection.title, remote.collection.subtitle,
+                                 remote.collection.artworkTrack(), s, remote.collection.kind == "artist",
+                                 kind = when (remote.collection.kind) { "artist" -> "Исполнитель"; "album" -> "Альбом"; else -> "Плейлист" }) {
+                             Row(verticalAlignment = Alignment.CenterVertically) {
+                                 CollectionPlay(s, remote.tracks, closing); Spacer(Modifier.width(16.dp))
++                                IconButton(onClick = { remote.tracks.shuffled().let { it.firstOrNull()?.let { t -> s.player.play(t, it) } } }, enabled = remote.tracks.isNotEmpty() && !closing) { Icon(ZiziIcons.Shuffle, "Перемешать загруженные треки", Modifier.size(28.dp), tint = Muted) }
++                                Spacer(Modifier.width(16.dp))
+                                 Text("Загружено ${remote.tracks.size}" + (remote.total?.let { " из $it" } ?: ""), color = Muted, modifier = Modifier.weight(1f))
+-                                IconButton(onClick = { remote.tracks.shuffled().let { it.firstOrNull()?.let { t -> s.player.play(t, it) } } }, enabled = remote.tracks.isNotEmpty()) { Icon(ZiziIcons.Shuffle, "Перемешать загруженные треки") }
+                             }
+                             TextButton(onClick = { s.playlist(remote.collection.title, remote.tracks); s.notice = "Загруженные треки сохранены отдельным плейлистом." }, enabled = remote.tracks.isNotEmpty()) { Text("Сохранить загруженные треки") }
+                             if (s.pageError.isNotBlank()) Text(s.pageError, color = MaterialTheme.colorScheme.error)
+                             if (s.opening) LinearProgressIndicator(Modifier.fillMaxWidth())
+                             }
+                         }
+-                        stickyHeader { TrackTableHeader(remote.collection.title, s, remote.tracks, closing, remoteCollapsed) }
+-                        itemsIndexed(remote.tracks, key = { _, it -> it.id }) { index, track -> TrackRow(s, track, remote.tracks, closing, onArtist = ::artist, number = index + 1) }
++                        if (remote.collection.kind == "artist") {
++                            item {
++                                ArtistTracks(s, remote, closing, ::artist)
++                                if (remote.tracks.size > 5) TextButton(onClick = { showAllArtist = !showAllArtist }, modifier = Modifier.padding(start = 24.dp)) {
++                                    Text(if (showAllArtist) "Свернуть" else "Показать ещё", color = Muted)
++                                }
++                            }
++                            if (showAllArtist) itemsIndexed(remote.tracks.drop(5), key = { _, it -> it.id }) { index, track ->
++                                TrackRow(s, track, remote.tracks, closing, onArtist = ::artist, number = index + 6)
++                            }
++                        } else {
++                            stickyHeader { TrackTableHeader(remote.collection.title, s, remote.tracks, closing, remoteCollapsed) }
++                            itemsIndexed(remote.tracks, key = { _, it -> it.id }) { index, track -> TrackRow(s, track, remote.tracks, closing, onArtist = ::artist, number = index + 1) }
++                        }
+                         item {
+                             if (s.pageError.isNotBlank()) TextButton(onClick = { s.open(remote.collection, remote.tracks.isNotEmpty() && remote.nextOffset != null) }) { Text("Повторить") }
+                             if (remote.nextOffset != null) OutlinedButton(onClick = { s.open(remote.collection, true) }, enabled = !s.opening) { Text("Загрузить ещё") }
+                         }
+                     }
+                 } else if (page == "Настройки") {
+-                    SettingsContent(s) { effects = true; queueOpen = false }
++                    SettingsContent(s) { dock = DesktopDock.EFFECTS }
+                 } else {
+-                    Row(verticalAlignment = Alignment.CenterVertically) {
+-                        if (detail != null) IconButton(onClick = { detail = null; query = "" }) { Icon(ZiziIcons.ArrowBack, "Назад") }
++                    if (detail == null) Row(verticalAlignment = Alignment.CenterVertically) {
+                         Text(if (detail != null) "Медиатека" else page, style = if (detail != null) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                         if (page in listOf("Плейлисты", "Медиатека")) IconButton(onClick = { playlistDialog = true }) { Icon(ZiziIcons.Plus, "Создать плейлист") }
+-                        IconButton(onClick = { effects = !effects; if (effects) queueOpen = false }) { Icon(ZiziIcons.Equalizer, "Эквалайзер", tint = if (effects) Brand else Ink) }
++                        IconButton(onClick = { dock = dock.toggle(DesktopDock.EFFECTS) }) { Icon(ZiziIcons.Equalizer, "Эквалайзер", tint = if (dock == DesktopDock.EFFECTS) Brand else Ink) }
+                     }
+                     if (detail == null) Spacer(Modifier.height(8.dp))
+                     if (page != "Поиск" && detail == null) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+@@ -402,7 +412,7 @@
+                     if (detail == null) Spacer(Modifier.height(8.dp))
+                     if (page == "Поиск") {
+                         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+-                            for ((kind, label) in listOf("track" to "Треки", "artist" to "Исполнители", "album" to "Альбомы", "playlist" to "Плейлисты"))
++                            for ((kind, label) in listOf("all" to "Все", "track" to "Треки", "artist" to "Исполнители", "album" to "Альбомы", "playlist" to "Плейлисты"))
+                                 FilterChip(selected = s.searchKind == kind, onClick = { if (query.isNotBlank()) search(query, kind) else s.selectSearchKind(kind) }, label = { Text(label) })
+                         }
+                         Row(verticalAlignment = Alignment.CenterVertically) {
+@@ -410,15 +420,10 @@
+                             SearchRefresh(s.searching, query.isNotBlank()) { search(query) }
+                         }
+                         if (!submitted) {
+-                            val suggestions = if (query.isBlank()) s.recentSearches.take(8) else app.ziziplayer.ui.SearchPresentation.completions(query, emptyList(), s.recentSearches, s.tracks.map { it.title })
+-                            LazyColumn(Modifier.weight(1f)) {
+-                                item { if (query.isBlank() && suggestions.isNotEmpty()) Row(verticalAlignment = Alignment.CenterVertically) {
+-                                    Text("Недавние", Modifier.weight(1f)); TextButton(onClick = s::clearHistory) { Text("Очистить") }
+-                                } }
+-                                items(suggestions) { text -> Row(Modifier.fillMaxWidth().clickable { search(text) }.padding(16.dp)) {
+-                                    Icon(ZiziIcons.History, null, tint = Muted); Spacer(Modifier.width(16.dp)); Text(text)
+-                                } }
+-                            }
++                            SearchHub(s, closing, Modifier.weight(1f), onQuery = { search(it, "all") }, onArtist = ::artist)
++                        } else if (s.searchKind == "all") {
++                            SearchOverview(s, closing, Modifier.weight(1f), onArtist = ::artist,
++                                onKind = { search(query, it) })
+                         } else if (s.searchKind != "track") {
+                             val cards = s.groups.map { LibraryCard(it.key, it.title, it.subtitle,
+                                 if (it.kind == "artist") ZiziIcons.Person else ZiziIcons.Queue, it.artworkTrack()) }
+@@ -457,7 +462,6 @@
+                             val key = detail?.key.orEmpty()
+                             val playlistId = key.takeIf { it.startsWith("pl:") }?.removePrefix("pl:")
+                             val all = when {
+-                                page == "Очередь" -> queue
+                                 page == "Загрузки" -> s.sorted(s.tracks.filter { it.id in s.downloaded })
+                                 key.startsWith("pl:") -> s.playlistTracks(key.removePrefix("pl:"))
+                                 key.startsWith("dir:") -> s.sorted(s.folderTracks(key.removePrefix("dir:")))
+@@ -469,13 +473,13 @@
+                             val localListState = rememberLazyListState()
+                             val localCollapsed by remember { derivedStateOf { localListState.firstVisibleItemIndex > 0 } }
+                             LaunchedEffect(key, page) { localListState.scrollToItem(0) }
+-                            ScrollList(Modifier.weight(1f), state = localListState) {
++                            ScrollList(Modifier.weight(1f).then(collectionBackground(all.firstOrNull(), s, localListState)), state = localListState) {
+                                 item {
+                                     CollectionHero(detailTitle ?: page, "${all.size} треков", all.firstOrNull(), s, key.startsWith("artist:"),
+                                         kind = when { key.startsWith("artist:") -> "Исполнитель · локальная медиатека"; playlistId != null -> "Плейлист"; else -> "Медиатека" }) {
+                                         Row(verticalAlignment = Alignment.CenterVertically) {
+                                             CollectionPlay(s, all, closing); Spacer(Modifier.width(16.dp))
+-                                            IconButton(onClick = { all.shuffled().let { list -> list.firstOrNull()?.let { s.player.play(it, list) } } }, enabled = all.isNotEmpty() && !closing) { Icon(ZiziIcons.Shuffle, "Перемешать") }
++                                            IconButton(onClick = { all.shuffled().let { list -> list.firstOrNull()?.let { s.player.play(it, list) } } }, enabled = all.isNotEmpty() && !closing) { Icon(ZiziIcons.Shuffle, "Перемешать", Modifier.size(28.dp), tint = Muted) }
+                                             if (playlistId != null) PlaylistControls(s, playlistId) { detail = null }
+                                             Spacer(Modifier.weight(1f)); Text("${all.size} треков", color = Muted, fontSize = 12.sp)
+                                         }
+@@ -483,21 +487,33 @@
+                                     }
+                                 }
+                                 stickyHeader { TrackTableHeader(detailTitle ?: page, s, all, closing, localCollapsed) }
+-                                itemsIndexed(visible, key = { _, it -> it.id }) { index, track -> TrackRow(s, track, all, closing, page == "Очередь", playlistId, ::artist, index + 1) }
++                                itemsIndexed(visible, key = { _, it -> it.id }) { index, track -> TrackRow(s, track, all, closing, false, playlistId, ::artist, index + 1) }
+                             }
+                         }
+                     }
+                 }
+             }
+-            AnimatedVisibility(queueOpen || effects, enter = expandHorizontally(tween(220)) + fadeIn(tween(160)),
+-                exit = shrinkHorizontally(tween(220)) + fadeOut(tween(120))) {
+-                if (queueOpen) QueuePanel(s, closing, Modifier.width(rightWidth).fillMaxHeight().clip(RoundedCornerShape(8.dp)).background(Panel),
+-                    close = { queueOpen = false }, onArtist = ::artist)
+-                else EffectsPanel(s, Modifier.width(rightWidth).fillMaxHeight().clip(RoundedCornerShape(8.dp)).background(Panel).padding(18.dp))
+-            }
+-        }
+-        Transport(s, closing, queueOpen, effects, onQueue = { queueOpen = !queueOpen; if (queueOpen) effects = false },
+-            onEffects = { effects = !effects; if (effects) queueOpen = false }, onArtist = ::artist) { expanded = true }
++            if (dock != DesktopDock.NONE) panelStates.SaveableStateProvider(dock.name) {
++                val panelModifier = Modifier.width(rightWidth).fillMaxHeight().clip(RoundedCornerShape(8.dp)).background(Panel)
++                when (dock) {
++                    DesktopDock.QUEUE -> QueuePanel(s, closing, panelModifier, close = { dock = DesktopDock.NONE }, onArtist = ::artist)
++                    DesktopDock.EFFECTS -> Column(panelModifier) {
++                        Row(Modifier.fillMaxWidth().padding(start = 18.dp), verticalAlignment = Alignment.CenterVertically) {
++                            Text("Звуковые эффекты", Modifier.weight(1f), fontWeight = FontWeight.Bold)
++                            IconButton(onClick = { dock = DesktopDock.NONE }) { Icon(ZiziIcons.Close, "Закрыть эффекты") }
++                        }
++                        EffectsPanel(s, Modifier.weight(1f).padding(horizontal = 18.dp))
++                    }
++                    DesktopDock.DEVICES -> DevicesPanel(s, closing, panelModifier) { dock = DesktopDock.NONE }
++                    DesktopDock.NONE -> Unit
++                }
++            }
++        }
++        Transport(s, closing, dock == DesktopDock.QUEUE, dock == DesktopDock.EFFECTS,
++            devicesOpen = dock == DesktopDock.DEVICES,
++            onQueue = { dock = dock.toggle(DesktopDock.QUEUE) },
++            onEffects = { dock = dock.toggle(DesktopDock.EFFECTS) },
++            onDevices = { dock = dock.toggle(DesktopDock.DEVICES) }, onArtist = ::artist) { expanded = true }
+     }
+     }
+     if (sourceDialog) SourceDialog(s) { sourceDialog = false }
+@@ -507,6 +523,7 @@
+             Column(Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                 Row(verticalAlignment = Alignment.CenterVertically) {
+                     Text("Сейчас играет", Modifier.weight(1f), color = Ink)
++                    IconButton(onClick = { s.player.stop() }, enabled = !closing && state.track != null) { Icon(ZiziIcons.Stop, "Остановить") }
+                     IconButton(onClick = { expanded = false }) { Icon(ZiziIcons.Close, "Свернуть") }
+                 }
+                 Artwork(state.track, s.client, 300.dp); Spacer(Modifier.height(20.dp))
+@@ -525,14 +542,21 @@
+ @Composable private fun CollectionHero(title: String, subtitle: String, track: PlayerTrack?, s: DesktopUi, artist: Boolean,
+     kind: String = if (artist) "Исполнитель" else "Коллекция", actions: @Composable () -> Unit = {}) {
+     val cover = coverData(track, s.client)
+-    val tone = animatedCollectionTone(if (s.prefs.artworkColor) collectionTone(cover?.primary) else Color(0xFF424242))
+-    // One continuous brush through hero AND action zone; no seam at the section boundary.
+-    Column(Modifier.fillMaxWidth().background(Brush.verticalGradient(
+-        0f to tone, .58f to tone.copy(alpha = .60f), 1f to Panel))) {
++    // The scrolling page owns the brush, including actions, table heading and first rows.
++    Column(Modifier.fillMaxWidth()) {
+         BoxWithConstraints(Modifier.fillMaxWidth()) {
+             val small = maxWidth < 680.dp
+-            val artSize = if (small) 144.dp else 184.dp
+-            Row(Modifier.fillMaxWidth().heightIn(min = if (small) 220.dp else 252.dp).padding(20.dp), verticalAlignment = Alignment.Bottom) {
++            val artSize = DesktopLayout.heroArtwork(maxWidth.value).dp
++            val textMeasurer = rememberTextMeasurer()
++            val density = LocalDensity.current
++            val titleSize = remember(title, maxWidth, density, textMeasurer) {
++                val upper = if (small) 56f else 96f
++                val measured = textMeasurer.measure(title, style = TextStyle(fontSize = upper.sp, fontWeight = FontWeight.Black),
++                    maxLines = 1, softWrap = false)
++                val available = with(density) { (maxWidth - artSize - (if (small) 18.dp else 24.dp) - 48.dp).toPx() }
++                (upper * available / measured.size.width.coerceAtLeast(1)).coerceIn(32f, upper).sp
++            }
++            Row(Modifier.fillMaxWidth().heightIn(min = DesktopLayout.heroHeight(maxWidth.value).dp).padding(horizontal = 24.dp, vertical = 24.dp), verticalAlignment = Alignment.Bottom) {
+                 Box(Modifier.size(artSize).clip(if (artist) CircleShape else RoundedCornerShape(4.dp)).background(Chip), contentAlignment = Alignment.Center) {
+                     if (cover != null) Image(cover.image, if (artist && track?.source?.startsWith("collection:") == true) "Фото исполнителя" else "Обложка коллекции",
+                         Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+@@ -542,14 +566,13 @@
+                 Column(Modifier.weight(1f).padding(bottom = 4.dp)) {
+                     Text(kind, color = Ink, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                     Spacer(Modifier.height(8.dp))
+-                    val titleSize = when { small -> 34.sp; title.length > 28 -> 40.sp; title.length > 18 -> 48.sp; else -> 64.sp }
+                     Text(title, fontSize = titleSize, lineHeight = titleSize * 1.06f, fontWeight = FontWeight.Black, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                     if (subtitle.isNotBlank()) Text(subtitle, color = Ink, fontSize = 13.sp,
+                         maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 16.dp))
+                 }
+             }
+         }
+-        Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp)) { actions() }
++        Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 24.dp)) { actions() }
+     }
+ }
+ @Composable private fun CollectionCards(cards: List<LibraryCard>, s: DesktopUi, modifier: Modifier, open: (LibraryCard) -> Unit) {
+@@ -588,12 +611,12 @@
+ }
+ @Composable private fun CollectionPlay(s: DesktopUi, tracks: List<PlayerTrack>, closing: Boolean) {
+     FilledIconButton(onClick = { tracks.firstOrNull()?.let { s.player.play(it, tracks) } }, enabled = tracks.isNotEmpty() && !closing,
+-        modifier = Modifier.size(52.dp), colors = IconButtonDefaults.filledIconButtonColors(containerColor = Brand, contentColor = Base)) {
++        modifier = Modifier.size(56.dp), colors = IconButtonDefaults.filledIconButtonColors(containerColor = Brand, contentColor = Base)) {
+         Icon(ZiziIcons.PlayFilled, "Слушать коллекцию", Modifier.size(28.dp))
+     }
+ }
+ @Composable private fun TrackTableHeader(title: String, s: DesktopUi, tracks: List<PlayerTrack>, closing: Boolean, collapsed: Boolean) {
+-    Column(Modifier.fillMaxWidth().background(Panel)) {
++    Column(Modifier.fillMaxWidth().background(if (collapsed) Panel else Color.Transparent)) {
+         if (collapsed) Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+             FilledIconButton(onClick = { tracks.firstOrNull()?.let { s.player.play(it, tracks) } }, enabled = tracks.isNotEmpty() && !closing, modifier = Modifier.size(36.dp)) {
+                 Icon(ZiziIcons.PlayFilled, "Слушать коллекцию", Modifier.size(22.dp))
+@@ -622,22 +645,22 @@
+     val interaction = remember { MutableInteractionSource() }; val hovered by interaction.collectIsHoveredAsState()
+     Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(4.dp)).background(if (hovered) Color(0xFF282828) else if (selected) Chip else Color.Transparent)
+         .hoverable(interaction).clickable(enabled = !closing) { if (selected) s.player.togglePause() else s.player.play(track, all) }
+-        .padding(horizontal = 20.dp, vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
++        .heightIn(min = 56.dp).padding(horizontal = 24.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+         if (number != null) Box(Modifier.width(28.dp), contentAlignment = Alignment.CenterStart) {
+             if (hovered) Icon(ZiziIcons.PlayFilled, null, Modifier.size(16.dp), tint = Ink)
+             else Text(number.toString(), color = if (selected) Brand else Muted, fontSize = 13.sp)
+         }
+-        Artwork(track, s.client, 36.dp); Spacer(Modifier.width(12.dp))
++        Artwork(track, s.client, 40.dp); Spacer(Modifier.width(12.dp))
+         Column(Modifier.weight(1f)) {
+             Text(track.title, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis,
+-                color = if (selected) Brand else Ink, fontSize = 14.sp)
++                color = if (selected) Brand else Ink, fontSize = 16.sp)
+             if (track.id in s.downloaded) Text("Скачано", color = Muted, style = MaterialTheme.typography.labelSmall)
+             Text(track.artist.ifBlank { if (track.source.startsWith("zizi://")) "Zizi" else "Локальный файл" }, color = Muted,
+-                fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.clickable(enabled = track.artist.isNotBlank()) { onArtist(track) })
++                fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.clickable(enabled = track.artist.isNotBlank()) { onArtist(track) })
+         }
+         if (queue || playlistId != null) {
+-            IconButton(onClick = { if (queue) s.player.move(track.id, -1) else s.playlistMove(playlistId!!, track.id, -1) }, enabled = all.indexOfFirst { it.id == track.id } > 0) { Icon(ZiziIcons.ChevronUp, "Переместить выше", Modifier.size(20.dp)) }
+-            IconButton(onClick = { if (queue) s.player.move(track.id, 1) else s.playlistMove(playlistId!!, track.id, 1) }, enabled = all.indexOfFirst { it.id == track.id } < all.lastIndex) { Icon(ZiziIcons.ChevronDown, "Переместить ниже", Modifier.size(20.dp)) }
++            IconButton(onClick = { if (queue) s.player.move(track.id, -1) else s.playlistMove(playlistId!!, track.id, -1) }, enabled = !closing && all.indexOfFirst { it.id == track.id } > 0, modifier = Modifier.size(32.dp)) { Icon(ZiziIcons.ChevronUp, "Переместить выше", Modifier.size(20.dp)) }
++            IconButton(onClick = { if (queue) s.player.move(track.id, 1) else s.playlistMove(playlistId!!, track.id, 1) }, enabled = !closing && all.indexOfFirst { it.id == track.id } < all.lastIndex, modifier = Modifier.size(32.dp)) { Icon(ZiziIcons.ChevronDown, "Переместить ниже", Modifier.size(20.dp)) }
+         }
+         IconButton(onClick = { s.favorite(track) }) { Icon(if (favorite) ZiziIcons.HeartFilled else ZiziIcons.Heart,
+             if (favorite) "Убрать из избранного" else "В избранное", tint = if (favorite) Brand else Muted, modifier = Modifier.size(20.dp)) }
+@@ -690,23 +713,19 @@
+     if (remove) ConfirmDialog("Удалить плейлист?", "Треки останутся в медиатеке, файлы не будут удалены.",
+         { s.deletePlaylist(id); remove = false; deleted() }) { remove = false }
+ }
+-@Composable private fun Transport(s: DesktopUi, closing: Boolean, queueOpen: Boolean = false, effectsOpen: Boolean = false,
+-    onQueue: (() -> Unit)? = null, onEffects: (() -> Unit)? = null, onArtist: ((PlayerTrack) -> Unit)? = null, expand: () -> Unit) {
++@Composable private fun Transport(s: DesktopUi, closing: Boolean, queueOpen: Boolean = false, effectsOpen: Boolean = false, devicesOpen: Boolean = false,
++    onDevices: (() -> Unit)? = null, onQueue: (() -> Unit)? = null, onEffects: (() -> Unit)? = null, onArtist: ((PlayerTrack) -> Unit)? = null, expand: () -> Unit) {
+     val state by s.player.state.collectAsState()
+-    val progress by s.player.progress.collectAsState()
+-    val valid = progress.trackId == state.track?.id && progress.generation == state.generation
+-    val duration = if (valid) progress.durationMs ?: 0 else 0
+-    val position = if (valid) progress.positionMs else 0
+-    var drag by remember(state.generation) { mutableStateOf<Float?>(null) }
+-    val sliderColors = SliderDefaults.colors(thumbColor = Brand, activeTrackColor = Brand,
+-        inactiveTrackColor = Color(0xFF454545), disabledThumbColor = Color(0xFF5A3826), disabledActiveTrackColor = Color(0xFF5A3826))
++    var unmutedGain by remember { mutableStateOf(s.gain.takeIf { it > 0f } ?: .35f) }
++    LaunchedEffect(s.gain) { if (s.gain > 0f) unmutedGain = s.gain }
+     BoxWithConstraints(Modifier.fillMaxWidth().height(90.dp).background(Base).padding(horizontal = 12.dp)) {
+         val wide = maxWidth > 1000.dp
++        val centerWidth = DesktopLayout.transportWidth(maxWidth.value).dp
+         Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
+-            Row(Modifier.weight(.29f), verticalAlignment = Alignment.CenterVertically) {
+-                Box(Modifier.clickable(onClick = expand)) { Artwork(state.track, s.client, if (wide) 54.dp else 44.dp) }
++            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
++                Box(Modifier.clickable(onClick = expand)) { Artwork(state.track, s.client, if (wide) 56.dp else 44.dp) }
+                 Spacer(Modifier.width(12.dp))
+-                Column(Modifier.weight(1f)) {
++                Column(Modifier.weight(1f, fill = false).widthIn(max = if (wide) 220.dp else 120.dp)) {
+                     Text(state.track?.title ?: "Zizi готов к музыке", fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold,
+                         modifier = Modifier.clickable(onClick = expand))
+                     Text(state.track?.artist.orEmpty(), color = Muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+@@ -719,14 +738,14 @@
+                     Icon(if (state.track?.id in s.library.favorites) ZiziIcons.HeartFilled else ZiziIcons.Heart, "Избранное", Modifier.size(19.dp), tint = Brand)
+                 }
+             }
+-            Column(Modifier.weight(.42f), horizontalAlignment = Alignment.CenterHorizontally) {
+-                Row(Modifier.height(44.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
++            Column(Modifier.width(centerWidth), horizontalAlignment = Alignment.CenterHorizontally) {
++                Row(Modifier.height(40.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                     IconButton(onClick = { s.settings(s.prefs.copy(shuffle = !s.prefs.shuffle)) }, enabled = !closing, modifier = Modifier.size(34.dp)) {
+                         Icon(ZiziIcons.Shuffle, "Случайный порядок: ${s.prefs.shuffle}", Modifier.size(19.dp), tint = if (s.prefs.shuffle) Brand else Muted)
+                     }
+                     IconButton(onClick = { s.player.adjacent(-1) }, enabled = !closing && s.player.queue.isNotEmpty(), modifier = Modifier.size(34.dp)) { Icon(ZiziIcons.SkipPrevious, "Предыдущий трек", Modifier.size(21.dp)) }
+                     FilledIconButton(onClick = { s.player.togglePause() }, enabled = !closing && state.track != null,
+-                        modifier = Modifier.size(36.dp), colors = IconButtonDefaults.filledIconButtonColors(containerColor = Brand, contentColor = Base)) {
++                        modifier = Modifier.size(32.dp), colors = IconButtonDefaults.filledIconButtonColors(containerColor = Brand, contentColor = Base)) {
+                         val pauses = state.phase in setOf(PlaybackPhase.PLAYING, PlaybackPhase.LOADING)
+                         Icon(if (pauses) ZiziIcons.Pause else ZiziIcons.PlayFilled, if (pauses) "Пауза" else "Воспроизвести", Modifier.size(22.dp))
+                     }
+@@ -736,21 +755,18 @@
+                             Modifier.size(19.dp), tint = if (s.prefs.repeat == RepeatMode.OFF) Muted else Brand)
+                     }
+                 }
+-                Row(Modifier.fillMaxWidth().height(28.dp), verticalAlignment = Alignment.CenterVertically) {
+-                    Text(time(drag?.toLong() ?: position), color = Muted, fontSize = 10.sp, modifier = Modifier.width(40.dp))
+-                    Slider(value = drag ?: position.toFloat().coerceIn(0f, duration.coerceAtLeast(1).toFloat()),
+-                        onValueChange = { drag = it }, onValueChangeFinished = { drag?.let { s.player.seek(it.toLong()) }; drag = null },
+-                        enabled = state.seekable && duration > 0 && !closing, valueRange = 0f..duration.coerceAtLeast(1).toFloat(),
+-                        colors = sliderColors, modifier = Modifier.weight(1f).height(24.dp))
+-                    Text(if (duration > 0) time(duration) else "—:—", color = Muted, fontSize = 10.sp, modifier = Modifier.padding(start = 8.dp).width(36.dp))
+-                }
+-            }
+-            Row(Modifier.weight(.29f), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+-                if (wide) IconButton(onClick = { s.player.stop() }, enabled = !closing && state.track != null, modifier = Modifier.size(32.dp)) { Icon(ZiziIcons.Stop, "Остановить", Modifier.size(17.dp), tint = Muted) }
+-                if (onEffects != null) IconButton(onClick = onEffects, modifier = Modifier.size(34.dp)) { Icon(ZiziIcons.Equalizer, "Эквалайзер", Modifier.size(19.dp), tint = if (effectsOpen) Brand else Muted) }
+-                if (onQueue != null) IconButton(onClick = onQueue, modifier = Modifier.size(34.dp)) { Icon(ZiziIcons.Queue, if (queueOpen) "Закрыть очередь" else "Открыть очередь", Modifier.size(19.dp), tint = if (queueOpen) Brand else Muted) }
+-                Text("${(s.gain * 100).toInt()}%", color = Muted, fontSize = 10.sp, modifier = Modifier.padding(start = 6.dp))
+-                Slider(s.gain, s::volume, enabled = !closing, colors = sliderColors, modifier = Modifier.width(if (wide) 90.dp else 64.dp))
++                SeekBar(s, closing)
++            }
++            Row(Modifier.weight(1f), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
++                if (wide && onEffects != null) DockButton(ZiziIcons.Equalizer, "Эквалайзер", effectsOpen, !closing, onEffects)
++                if (onQueue != null) DockButton(ZiziIcons.Queue, "Очередь", queueOpen, !closing, onQueue)
++                if (onDevices != null) DockButton(ZiziIcons.Headphones, "Устройства вывода", devicesOpen, !closing, onDevices)
++                IconButton(onClick = { s.volume(if (s.gain > 0f) 0f else unmutedGain) }, enabled = !closing, modifier = Modifier.size(28.dp)) {
++                    Icon(if (s.gain > 0f) DesktopIcons.Volume else DesktopIcons.Muted,
++                        if (s.gain > 0f) "Выключить звук" else "Включить звук", Modifier.size(18.dp), tint = Muted)
++                }
++                ThinSlider(s.gain, s::volume, s::volume, enabled = !closing, label = "Громкость",
++                    modifier = Modifier.width(if (wide) 100.dp else 64.dp), keyboardStep = .05f)
+                 if (wide) IconButton(onClick = expand, modifier = Modifier.size(32.dp)) { Icon(ZiziIcons.ChevronUp, "Развернуть плеер", Modifier.size(19.dp), tint = Muted) }
+             }
+         }
+@@ -853,7 +869,7 @@
+                             TextButton(onClick = { confirmHistory = true }, enabled = s.recentSearches.isNotEmpty()) { Text("Очистить историю поиска") }
+                         }
+                         "О приложении" -> {
+-                            Text("ZiziPlayer Desktop 0.3.3 preview")
++                            Text("ZiziPlayer Desktop 0.3.4 preview")
+                             TextButton(onClick = { s.showDataFolder() }) { Text("Открыть папку данных") }
+                             TextButton(onClick = { diagnostics = true }) { Text("Диагностика и аудиодекодер") }
+                         }
+@@ -1015,7 +1031,7 @@
+ @Composable private fun LibrarySidebar(s: DesktopUi, cards: List<LibraryCard>, page: String, selectedKey: String?,
+     collapsed: Boolean, modifier: Modifier, onCollapse: () -> Unit, onNavigate: (String) -> Unit,
+     onCard: (LibraryCard) -> Unit, onCreate: () -> Unit, onSource: () -> Unit, closing: Boolean) {
+-    var filter by remember { mutableStateOf("Все") }
++    var filter by rememberSaveable { mutableStateOf("Все") }
+     var addMenu by remember { mutableStateOf(false) }
+     val shown = cards.filter { when (filter) {
+         "Плейлисты" -> it.key.startsWith("pl:") || it.key == "favorites"
+@@ -1091,7 +1107,10 @@
+     closing: Boolean, width: Dp, onQuery: (String) -> Unit, onTrack: (PlayerTrack) -> Unit, onAll: () -> Unit) {
+     Surface(Modifier.width(width).heightIn(max = 560.dp), color = Color(0xFF282828), shape = RoundedCornerShape(8.dp), shadowElevation = 16.dp) {
+         LazyColumn(Modifier.fillMaxWidth().padding(6.dp)) {
+-            item { Text("↑ ↓ выбрать · Enter открыть · Esc закрыть", color = Muted, fontSize = 11.sp, modifier = Modifier.padding(10.dp)) }
++            item { Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically) {
++                Text(if (s.previewQuery.isBlank()) "История поиска" else "Подсказки", Modifier.weight(1f), fontSize = 14.sp, fontWeight = FontWeight.Bold)
++                if (s.previewQuery.isBlank() && completions.isNotEmpty()) TextButton(onClick = s::clearHistory) { Text("Очистить", fontSize = 12.sp) }
++            } }
+             itemsIndexed(completions) { index, text ->
+                 Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(4.dp)).background(if (index == selected) Color(0xFF424242) else Color.Transparent)
+                     .clickable { onQuery(text) }.padding(horizontal = 12.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+@@ -1136,7 +1155,7 @@
+ @Composable private fun QueuePanel(s: DesktopUi, closing: Boolean, modifier: Modifier, close: () -> Unit, onArtist: (PlayerTrack) -> Unit) {
+     val state by s.player.state.collectAsState()
+     val queue by s.player.queueState.collectAsState()
+-    var previous by remember { mutableStateOf(false) }
++    var previous by rememberSaveable { mutableStateOf(false) }
+     val current = queue.indexOfFirst { it.id == state.track?.id }
+     // Queue positions are not claimed to be a listening history, especially when shuffle is on.
+     val shown = if (previous) queue.take(current.coerceAtLeast(0)) else queue.drop(if (current < 0) 0 else current + 1)
+@@ -1194,3 +1213,262 @@
+         VerticalScrollbar(rememberScrollbarAdapter(state), Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(8.dp))
+     }
+ }
++
++@Composable private fun DockButton(icon: ImageVector, label: String, active: Boolean, enabled: Boolean, click: () -> Unit) {
++    IconButton(onClick = click, enabled = enabled, modifier = Modifier.size(32.dp)) {
++        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
++            Icon(icon, if (active) "Закрыть: $label" else "Открыть: $label", Modifier.size(18.dp), tint = if (active) Brand else Muted)
++            if (active) Box(Modifier.align(Alignment.BottomCenter).padding(bottom = 1.dp).size(4.dp).background(Brand, CircleShape))
++        }
++    }
++}
++
++@Composable private fun DevicesPanel(s: DesktopUi, closing: Boolean, modifier: Modifier, close: () -> Unit) {
++    val active by s.outputs.active.collectAsState()
++    var devices by remember { mutableStateOf<List<OutputDevice>>(emptyList()) }
++    var selected by remember { mutableStateOf(s.outputs.selectedId) }
++    var message by remember { mutableStateOf("") }
++    var refresh by remember { mutableStateOf(0) }
++    var loading by remember { mutableStateOf(true) }
++    // No device polling when the dock is closed; IO never runs in composition or paint.
++    LaunchedEffect(refresh) {
++        do {
++            try {
++                devices = withContext(Dispatchers.IO) { s.outputs.devices() }
++                message = if (devices.isEmpty()) "Java Sound не сообщил о доступных выходах." else ""
++            } catch (e: CancellationException) { throw e }
++            catch (_: Exception) { message = "Не удалось прочитать устройства. Проверь настройки звука." }
++            finally { loading = false }
++            delay(5000)
++        } while (isActive)
++    }
++    Column(modifier.padding(16.dp)) {
++        Row(verticalAlignment = Alignment.CenterVertically) {
++            Text("Устройства вывода", Modifier.weight(1f), fontWeight = FontWeight.Bold)
++            IconButton(onClick = close) { Icon(ZiziIcons.Close, "Закрыть устройства") }
++        }
++        Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(Chip).padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
++            Icon(ZiziIcons.Headphones, null, Modifier.size(24.dp), tint = if (active != null) Brand else Muted)
++            Spacer(Modifier.width(12.dp))
++            Column(Modifier.weight(1f)) {
++                Text(active?.name ?: "Аудиовыход не открыт", color = if (active != null) Brand else Ink, fontWeight = FontWeight.SemiBold)
++                Text("Этот компьютер", color = Muted, fontSize = 12.sp)
++            }
++        }
++        Spacer(Modifier.height(18.dp))
++        Text("Куда выводить звук", fontWeight = FontWeight.Bold)
++        Text("Для системного драйвера имя физической гарнитуры может быть недоступно. Bluetooth подключается в Windows, не через Wi-Fi.",
++            color = Muted, fontSize = 12.sp, modifier = Modifier.padding(vertical = 10.dp))
++        ScrollList(Modifier.weight(1f)) {
++            item {
++                Row(Modifier.fillMaxWidth().clickable(enabled = !closing) { s.selectOutput(null); selected = null }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
++                    RadioButton(selected == null, onClick = null)
++                    Text("По умолчанию в системе", Modifier.weight(1f).padding(start = 8.dp), fontSize = 13.sp)
++                }
++            }
++            items(devices, key = { it.id }) { device ->
++                Row(Modifier.fillMaxWidth().clickable(enabled = !closing) { s.selectOutput(device); selected = device.id }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
++                    RadioButton(selected == device.id, onClick = null)
++                    Text(device.name, Modifier.weight(1f).padding(start = 8.dp), fontSize = 13.sp)
++                }
++            }
++            item {
++                if (loading) LinearProgressIndicator(Modifier.fillMaxWidth(), color = Brand)
++                if (message.isNotBlank()) Text(message, color = Muted, fontSize = 12.sp)
++                if (selected != null && devices.none { it.id == selected }) Text("Выбранный выход больше не доступен. Выбери другой или системный.", color = Brand, fontSize = 12.sp)
++                Text("Переключение открывает аудиовыход заново: возможна короткая пауза. Для потока без перемотки выбор применяется со следующего запуска. Выбор действует в этом сеансе.",
++                    color = Muted, fontSize = 12.sp, modifier = Modifier.padding(top = 16.dp))
++            }
++        }
++        TextButton(onClick = { refresh++ }, enabled = !closing) { Text("Обновить устройства") }
++        OutlinedButton(onClick = s::systemSoundSettings, enabled = !closing, modifier = Modifier.fillMaxWidth()) { Text("Настройки звука системы") }
++    }
++}
++
++@Composable private fun SearchHub(s: DesktopUi, closing: Boolean, modifier: Modifier, onQuery: (String) -> Unit, onArtist: (PlayerTrack) -> Unit) {
++    val seeds = remember(s.tracks, s.library.favorites) {
++        s.tracks.filter { it.artist.isNotBlank() }.sortedByDescending { it.id in s.library.favorites }
++            .distinctBy { it.artist.lowercase() }.take(10)
++    }
++    val favorites = remember(s.tracks, s.library.favorites) { s.tracks.filter { it.id in s.library.favorites }.take(8) }
++    val categories = remember { listOf("Фонк" to "phonk", "Бразильский фанк" to "funk brazilian", "Замедленные" to "slowed reverb",
++        "Ускоренные" to "sped up", "Русский рэп" to "русский рэп", "Хип-хоп" to "hip hop", "Электроника" to "electronic music", "Рок" to "rock classics") }
++    BoxWithConstraints(modifier) {
++        val columns = (maxWidth.value / 220f).toInt().coerceIn(2, 4)
++        ScrollList(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
++            if (seeds.isNotEmpty()) {
++                item { Text("Открой больше музыки", fontSize = 24.sp, fontWeight = FontWeight.Bold) }
++                item { Text("Исполнители из твоей медиатеки — отправная точка для поиска, не персональная выдача сервера.", color = Muted, fontSize = 13.sp) }
++                item {
++                    androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
++                        items(seeds, key = { it.artist.lowercase() }) { track ->
++                            Column(Modifier.width(160.dp).clip(RoundedCornerShape(8.dp)).background(Chip).clickable { onQuery(track.artist) }.padding(12.dp)) {
++                                Artwork(track, s.client, 136.dp)
++                                Spacer(Modifier.height(10.dp))
++                                Text(track.artist, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
++                                Text("Найти в каталоге", color = Muted, fontSize = 12.sp)
++                            }
++                        }
++                    }
++                }
++            }
++            item { Text("Жанры и настроение", fontSize = 24.sp, fontWeight = FontWeight.Bold) }
++            items(categories.chunked(columns), key = { it.first().second }) { row ->
++                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
++                    row.forEach { (label, query) ->
++                        val index = categories.indexOf(label to query)
++                        val colors = listOf(0xFF873600, 0xFF8D1836, 0xFF4E237D, 0xFF204D73, 0xFF754224, 0xFF665600, 0xFF21564A, 0xFF6D3035)
++                        Box(Modifier.weight(1f).aspectRatio(1.9f).clip(RoundedCornerShape(8.dp))
++                            .background(Brush.linearGradient(listOf(Color(colors[index]), Panel)))
++                            .clickable { onQuery(query) }.padding(18.dp)) {
++                            Text(label, fontSize = 21.sp, fontWeight = FontWeight.Bold, maxLines = 2)
++                            Icon(ZiziIcons.Search, null, Modifier.align(Alignment.BottomEnd).size(32.dp), tint = Ink.copy(alpha = .4f))
++                        }
++                    }
++                    repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
++                }
++            }
++            if (s.recentSearches.isNotEmpty()) {
++                item { Row(verticalAlignment = Alignment.CenterVertically) {
++                    Text("Недавние запросы", Modifier.weight(1f), fontSize = 22.sp, fontWeight = FontWeight.Bold)
++                    TextButton(onClick = s::clearHistory) { Text("Очистить") }
++                } }
++                items(s.recentSearches.take(8), key = { "query:$it" }) { query ->
++                    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(6.dp)).background(Chip).clickable { onQuery(query) }.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
++                        Icon(ZiziIcons.History, null, Modifier.size(20.dp), tint = Muted)
++                        Text(query, Modifier.weight(1f).padding(start = 14.dp), maxLines = 1, overflow = TextOverflow.Ellipsis)
++                    }
++                }
++            }
++            if (favorites.isNotEmpty()) {
++                item { Text("Твоё избранное", fontSize = 22.sp, fontWeight = FontWeight.Bold) }
++                items(favorites, key = { "favorite:${it.id}" }) { track -> TrackRow(s, track, favorites, closing, onArtist = onArtist) }
++            }
++            item { Spacer(Modifier.height(20.dp)) }
++        }
++    }
++}
++
++@Composable private fun SearchOverview(s: DesktopUi, closing: Boolean, modifier: Modifier, onArtist: (PlayerTrack) -> Unit, onKind: (String) -> Unit) {
++    ScrollList(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
++        if (s.searching) item { LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp), color = Brand) }
++        if (s.results.isNotEmpty()) {
++            item {
++                val best = s.results.first()
++                Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(Chip).padding(20.dp)) {
++                    Text("Первый результат", fontSize = 22.sp, fontWeight = FontWeight.Bold)
++                    Spacer(Modifier.height(16.dp))
++                    Row(verticalAlignment = Alignment.CenterVertically) {
++                        Artwork(best, s.client, 96.dp); Spacer(Modifier.width(20.dp))
++                        Column(Modifier.weight(1f)) {
++                            Text(best.title, fontSize = 28.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
++                            TextButton(onClick = { onArtist(best) }, enabled = best.artist.isNotBlank()) { Text(best.artist, color = Muted) }
++                        }
++                        CollectionPlay(s, s.results, closing)
++                    }
++                }
++            }
++            item { Row(verticalAlignment = Alignment.CenterVertically) {
++                Text("Треки", Modifier.weight(1f), fontSize = 22.sp, fontWeight = FontWeight.Bold)
++                TextButton(onClick = { onKind("track") }) { Text("Все треки") }
++            } }
++            items(s.results.take(5), key = { "result:${it.id}" }) { track -> TrackRow(s, track, s.results, closing, onArtist = onArtist) }
++        }
++        for ((kind, title) in listOf("artist" to "Исполнители", "album" to "Альбомы", "playlist" to "Плейлисты")) {
++            val groups = s.groups.filter { it.kind == kind }
++            if (groups.isNotEmpty()) {
++                item(key = "heading:$kind") { Row(verticalAlignment = Alignment.CenterVertically) {
++                    Text(title, Modifier.weight(1f), fontSize = 22.sp, fontWeight = FontWeight.Bold)
++                    TextButton(onClick = { onKind(kind) }) { Text("Показать все") }
++                } }
++                item(key = "shelf:$kind") {
++                    androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
++                        items(groups, key = { it.key }) { group ->
++                            Column(Modifier.width(180.dp).clip(RoundedCornerShape(8.dp)).background(Chip).clickable { s.open(group) }.padding(12.dp)) {
++                                Artwork(group.artworkTrack(), s.client, 156.dp, artist = kind == "artist")
++                                Spacer(Modifier.height(12.dp))
++                                Text(group.title, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
++                                Text(group.subtitle.ifBlank { if (kind == "artist") "Исполнитель" else if (kind == "album") "Альбом" else "Плейлист" },
++                                    color = Muted, fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
++                            }
++                        }
++                    }
++                }
++            }
++        }
++    }
++}
++
++@Composable private fun collectionBackground(track: PlayerTrack?, s: DesktopUi, state: LazyListState): Modifier {
++    val cover = coverData(track, s.client)
++    val tone = animatedCollectionTone(if (s.prefs.artworkColor) collectionTone(cover?.primary) else Color(0xFF424242))
++    return Modifier.clipToBounds().drawWithCache {
++        val hero = DesktopLayout.heroHeight(size.width / density).dp.toPx()
++        val end = hero + 244.dp.toPx()
++        val brush = Brush.verticalGradient(
++            0f to tone, (hero / end) to shadeCollectionTone(tone, .62f),
++            ((hero + 1.dp.toPx()) / end) to shadeCollectionTone(tone, .44f),
++            ((hero + 150.dp.toPx()) / end) to shadeCollectionTone(tone, .12f), 1f to Panel,
++            startY = 0f, endY = end)
++        onDrawBehind {
++            drawRect(Panel)
++            // Reads in draw phase: scrolling does not recompose/redecode the page.
++            if (state.firstVisibleItemIndex == 0) translate(top = -state.firstVisibleItemScrollOffset.toFloat()) {
++                drawRect(brush, size = Size(size.width, end))
++            }
++        }
++    }
++}
++
++@Composable private fun ArtistTracks(s: DesktopUi, page: CatalogPage, closing: Boolean, artist: (PlayerTrack) -> Unit) {
++    val saved = remember(s.tracks, page.collection.key, page.tracks) {
++        val ids = page.tracks.mapTo(hashSetOf()) { it.id }
++        s.tracks.filter { it.id in ids }
++    }
++    BoxWithConstraints(Modifier.fillMaxWidth()) {
++        val wide = maxWidth >= 900.dp
++        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
++            Column(Modifier.weight(if (wide) .64f else 1f)) {
++                Text("Популярные треки", Modifier.padding(horizontal = 24.dp, vertical = 12.dp), fontSize = 24.sp, fontWeight = FontWeight.Bold)
++                page.tracks.take(5).forEachIndexed { index, track -> key(track.id) {
++                    TrackRow(s, track, page.tracks, closing, onArtist = artist, number = index + 1)
++                } }
++            }
++            if (wide) Column(Modifier.weight(.36f).padding(top = 12.dp, end = 24.dp)) {
++                Text("В твоей медиатеке", fontSize = 24.sp, fontWeight = FontWeight.Bold)
++                Spacer(Modifier.height(18.dp))
++                Row(verticalAlignment = Alignment.CenterVertically) {
++                    Artwork(page.collection.artworkTrack(), s.client, 80.dp, artist = true)
++                    Spacer(Modifier.width(14.dp))
++                    Text("${saved.size} из загруженных треков сохранено", fontSize = 14.sp, color = Muted, modifier = Modifier.weight(1f))
++                }
++                if (saved.isNotEmpty()) TextButton(onClick = { s.player.play(saved.first(), saved) }, enabled = !closing) { Text("Слушать сохранённое") }
++                Text("Показаны данные каталога Zizi. Счётчики Spotify и «Выбор исполнителя» этот источник не предоставляет.",
++                    fontSize = 12.sp, color = Muted, modifier = Modifier.padding(top = 20.dp))
++            }
++        }
++    }
++}
++
++@Composable private fun SeekBar(s: DesktopUi, closing: Boolean) {
++    val state by s.player.state.collectAsState()
++    val progress by s.player.progress.collectAsState()
++    val valid = progress.trackId == state.track?.id && progress.generation == state.generation
++    val duration = if (valid) progress.durationMs ?: 0 else 0
++    val position = if (valid) progress.positionMs else 0
++    var drag by remember(state.generation) { mutableStateOf<Float?>(null) }
++                Row(Modifier.fillMaxWidth().height(24.dp), verticalAlignment = Alignment.CenterVertically) {
++                    Text(time(drag?.toLong() ?: position), color = Muted, fontSize = 12.sp, textAlign = androidx.compose.ui.text.style.TextAlign.End, modifier = Modifier.width(44.dp).padding(end = 8.dp))
++                    ThinSlider(value = drag ?: position.toFloat().coerceIn(0f, duration.coerceAtLeast(1).toFloat()),
++                        onValueChange = { drag = it }, onCommit = { target ->
++                            val live = s.player.state.value
++                            if (live.track?.id == state.track?.id && live.generation == state.generation && valid && !closing)
++                                s.player.seek(target.toLong())
++                            drag = null
++                        }, onCancel = { drag = null }, gestureKey = state.track?.id to state.generation,
++                        enabled = valid && state.seekable && duration > 0 && !closing,
++                        valueRange = 0f..duration.coerceAtLeast(1).toFloat(), keyboardStep = 5000f,
++                        label = "Позиция воспроизведения", modifier = Modifier.weight(1f))
++                    Text(if (duration > 0) time(duration) else "—:—", color = Muted, fontSize = 12.sp, modifier = Modifier.padding(start = 8.dp).width(36.dp))
++                }
++}
+--- a/src/main/kotlin/app/ziziplayer/desktop/ui/DesktopUi.kt
++++ b/src/main/kotlin/app/ziziplayer/desktop/ui/DesktopUi.kt
+@@ -12,7 +12,8 @@
+ import javax.swing.JFileChooser
+ 
+ internal class DesktopUi(val scope: CoroutineScope, val store: LibraryStore, initial: LibrarySnapshot) {
+-    val player = DesktopPlayer(scope)
++    val outputs = AudioOutputs()
++    val player = DesktopPlayer(scope, sinkFactory = outputs::createSink)
+     val offline = OfflineFiles(store.directory.resolve("downloads"))
+     var downloaded by mutableStateOf<Set<String>>(emptySet()); private set
+     var downloadId by mutableStateOf<String?>(null); private set
+@@ -25,7 +26,7 @@
+     var results by mutableStateOf<List<PlayerTrack>>(emptyList()); private set
+     var groups by mutableStateOf<List<CatalogCollection>>(emptyList()); private set
+     var nextBrowse by mutableStateOf<Int?>(null); private set
+-    var searchKind by mutableStateOf("track"); private set
++    var searchKind by mutableStateOf("all"); private set
+     var searching by mutableStateOf(false); private set
+     var searchMessage by mutableStateOf("Что хочешь послушать?"); private set
+     var openPage by mutableStateOf<CatalogPage?>(null); private set
+@@ -50,6 +51,7 @@
+     val previewLoading get() = previews.loading
+     val previewMessage get() = previews.message
+     private var searchJob: Job? = null
++    private var searchGeneration = 0L
+     private var pageJob: Job? = null
+     private var scanJob: Job? = null
+     private var folderJob: Job? = null
+@@ -145,6 +147,25 @@
+             else if (id != null) prefs.copy(trackDsp = prefs.trackDsp + (id to encoded)) else prefs)
+         persist()
+     }
++    fun selectOutput(device: OutputDevice?) {
++        outputs.select(device)
++        val state = player.state.value
++        val progress = player.progress.value
++        if (state.seekable && state.phase in setOf(PlaybackPhase.PLAYING, PlaybackPhase.PAUSED) &&
++            progress.trackId == state.track?.id && progress.generation == state.generation) {
++            player.seek(progress.positionMs) // existing serialized handover preserves position and pause
++        } else notice = "Выход выбран. Он будет применён при следующем запуске трека."
++    }
++    fun systemSoundSettings() {
++        scope.launch(Dispatchers.IO) {
++            val ok = runCatching {
++                if (System.getProperty("os.name").startsWith("Windows"))
++                    ProcessBuilder("control.exe", "mmsys.cpl").start()
++                else throw UnsupportedOperationException()
++            }.isSuccess
++            if (!ok) withContext(Dispatchers.Main) { notice = "Открой настройки звука операционной системы." }
++        }
++    }
+     fun volume(value: Float) {
+         player.volume(value); gain = player.gain
+         library = library.copy(settings = prefs.copy(volume = gain)) // periodic + shutdown persist; no disk writes per slider pixel
+@@ -299,29 +320,60 @@
+     fun cancelPreview() = previews.cancel()
+     fun preview(raw: String) = previews.request(raw)
+     fun selectSearchKind(kind: String) { searchKind = kind; cancelSearch() }
+-    fun cancelSearch() { searchJob?.cancel(); searching = false; results = emptyList(); groups = emptyList(); nextBrowse = null }
++    fun cancelSearch() { searchGeneration++; searchJob?.cancel(); searching = false; results = emptyList(); groups = emptyList(); nextBrowse = null }
+     fun search(query: String, kind: String = searchKind, more: Boolean = false) {
+-        searchJob?.cancel()
+-        val q = query.trim(); if (q.isBlank() || q.length > 300) return
+-        val api = client ?: run { searchMessage = connectionMessage; return }
++        val q = query.trim()
++        if (q.isBlank() || q.length > 300 || kind !in setOf("all", "track", "artist", "album", "playlist")) return
+         val offset = if (more) nextBrowse ?: return else 0
++        searchJob?.cancel(); val token = ++searchGeneration
+         searchKind = kind; lastQuery = q
+         if (!more) { results = emptyList(); groups = emptyList(); nextBrowse = null }
+         recentSearches = (listOf(q) + recentSearches).distinctBy { it.lowercase() }.take(20)
+         DesktopPreferences.recentSearches = recentSearches
++        val local = tracks.filter { (it.title + " " + it.artist).contains(q, true) }.take(30)
++        val api = client ?: run {
++            results = if (kind in setOf("all", "track")) local else emptyList()
++            searchMessage = "Каталог недоступен. Показаны локальные совпадения."; searching = false; return
++        }
+         searching = true; searchMessage = "Ищем музыку…"
+         searchJob = scope.launch {
+             try {
+-                if (kind == "track") results = runInterruptible(Dispatchers.IO) { api.search(q) }
+-                else {
+-                    val page = runInterruptible(Dispatchers.IO) { api.browse(q, kind, offset) }
+-                    groups = (if (more) groups + page.items else page.items).distinctBy { it.key }; nextBrowse = page.nextOffset
+-                }
+-                connectionMessage = "Каталог доступен"
+-                searchMessage = if (results.isEmpty() && groups.isEmpty()) "Ничего не найдено" else "Результаты поиска"
++                if (kind == "all") supervisorScope {
++                    val songs = async { searchPart { runInterruptible(Dispatchers.IO) { api.search(q) } } }
++                    val collections = listOf("artist", "album", "playlist").map { type ->
++                        async { searchPart { runInterruptible(Dispatchers.IO) { api.browse(q, type) } } }
++                    }
++                    val trackResult = songs.await()
++                    val collectionResults = collections.awaitAll()
++                    ensureActive()
++                    if (token != searchGeneration) return@supervisorScope
++                    results = (trackResult.getOrNull().orEmpty() + local).distinctBy { it.id }
++                    groups = collectionResults.flatMap { it.getOrNull()?.items.orEmpty().take(6) }.distinctBy { it.key }
++                    val errors = listOfNotNull(trackResult.exceptionOrNull()) + collectionResults.mapNotNull { it.exceptionOrNull() }
++                    searchMessage = when {
++                        errors.isNotEmpty() -> "Часть разделов недоступна. Можно повторить поиск или открыть отдельную вкладку."
++                        results.isEmpty() && groups.isEmpty() -> "Ничего не найдено"
++                        else -> "Результаты поиска"
++                    }
++                } else {
++                    if (kind == "track") {
++                        val found = runInterruptible(Dispatchers.IO) { api.search(q) }; ensureActive()
++                        if (token == searchGeneration) results = (found + local).distinctBy { it.id }
++                    } else {
++                        val found = runInterruptible(Dispatchers.IO) { api.browse(q, kind, offset) }; ensureActive()
++                        if (token == searchGeneration) {
++                            groups = (if (more) groups + found.items else found.items).distinctBy { it.key }; nextBrowse = found.nextOffset
++                        }
++                    }
++                    if (token == searchGeneration) searchMessage = if (results.isEmpty() && groups.isEmpty()) "Ничего не найдено" else "Результаты поиска"
++                }
+             } catch (e: CancellationException) { throw e }
+-            catch (e: Exception) { searchMessage = networkMessage(e) }
+-            finally { if (isActive) searching = false }
++            catch (e: Exception) {
++                if (token == searchGeneration) {
++                    if (kind in setOf("all", "track")) results = local
++                    searchMessage = networkMessage(e)
++                }
++            } finally { if (token == searchGeneration) searching = false }
+         }
+     }
+     fun moreSearch() = search(lastQuery, searchKind, true)
+--- /dev/null
++++ b/src/main/kotlin/app/ziziplayer/desktop/ui/SearchPart.kt
+@@ -0,0 +1,9 @@
++package app.ziziplayer.desktop.ui
++
++import kotlinx.coroutines.CancellationException
++
++/** Isolate a failing shelf, but never turn cancellation into a successful partial response. */
++internal suspend fun <T> searchPart(block: suspend () -> T): Result<T> = try {
++    Result.success(block())
++} catch (e: CancellationException) { throw e }
++catch (e: Exception) { Result.failure(e) }
+--- /dev/null
++++ b/src/main/kotlin/app/ziziplayer/desktop/ui/ThinSlider.kt
+@@ -0,0 +1,106 @@
++package app.ziziplayer.desktop.ui
++
++import androidx.compose.foundation.Canvas
++import androidx.compose.foundation.focusable
++import androidx.compose.foundation.gestures.awaitEachGesture
++import androidx.compose.foundation.gestures.awaitFirstDown
++import androidx.compose.foundation.hoverable
++import androidx.compose.foundation.interaction.MutableInteractionSource
++import androidx.compose.foundation.interaction.collectIsHoveredAsState
++import androidx.compose.foundation.layout.height
++import androidx.compose.runtime.*
++import androidx.compose.ui.Modifier
++import androidx.compose.ui.focus.onFocusChanged
++import androidx.compose.ui.geometry.Offset
++import androidx.compose.ui.graphics.Color
++import androidx.compose.ui.graphics.StrokeCap
++import androidx.compose.ui.input.key.*
++import androidx.compose.ui.input.pointer.pointerInput
++import androidx.compose.ui.semantics.*
++import androidx.compose.ui.unit.dp
++
++/** 4dp paint, 24dp hit area. No Material track gap, vertical thumb or minimum component size.
++ * A cancelled pointer sequence NEVER commits. Identity changes cancel the old seek gesture.
++ */
++@Composable internal fun ThinSlider(
++    value: Float, onValueChange: (Float) -> Unit, onCommit: (Float) -> Unit,
++    modifier: Modifier = Modifier, enabled: Boolean = true, label: String,
++    valueRange: ClosedFloatingPointRange<Float> = 0f..1f, gestureKey: Any? = Unit,
++    keyboardStep: Float = (valueRange.endInclusive - valueRange.start) / 100f,
++    onCancel: () -> Unit = {}
++) {
++    val interaction = remember { MutableInteractionSource() }
++    val hovered by interaction.collectIsHoveredAsState()
++    var focused by remember { mutableStateOf(false) }
++    var dragging by remember(gestureKey) { mutableStateOf(false) }
++    val liveGestureKey by rememberUpdatedState(gestureKey)
++    val change by rememberUpdatedState(onValueChange)
++    val commit by rememberUpdatedState(onCommit)
++    val cancel by rememberUpdatedState(onCancel)
++    val current by rememberUpdatedState(value.coerceIn(valueRange))
++    val range by rememberUpdatedState(valueRange)
++    val span = valueRange.endInclusive - valueRange.start
++    val fraction = if (span > 0f) ((current - valueRange.start) / span).coerceIn(0f, 1f) else 0f
++    val active = enabled && (hovered || focused || dragging)
++    fun set(v: Float) { val bounded = v.coerceIn(valueRange); change(bounded); commit(bounded) }
++    Canvas(modifier.height(24.dp).hoverable(interaction, enabled)
++        .semantics {
++            contentDescription = label
++            progressBarRangeInfo = ProgressBarRangeInfo(current, valueRange)
++            if (!enabled) disabled()
++            setProgress { if (enabled) { set(it); true } else false }
++        }
++        .onPreviewKeyEvent {
++            if (!enabled || it.type != KeyEventType.KeyDown) false else {
++                val target = when (it.key) {
++                    Key.DirectionLeft, Key.DirectionDown -> current - keyboardStep
++                    Key.DirectionRight, Key.DirectionUp -> current + keyboardStep
++                    Key.MoveHome -> valueRange.start
++                    Key.MoveEnd -> valueRange.endInclusive
++                    else -> null
++                }
++                if (target == null) false else { set(target); true }
++            }
++        }.onFocusChanged { focused = it.isFocused }.focusable(enabled, interaction)
++        .pointerInput(enabled, gestureKey) {
++            if (!enabled) return@pointerInput
++            awaitEachGesture {
++                val down = awaitFirstDown()
++                down.consume()
++                dragging = true
++                var committed = false
++                fun at(x: Float): Float {
++                    val inset = 5.dp.toPx()
++                    val f = ((x - inset) / (size.width - 2 * inset).coerceAtLeast(1f)).coerceIn(0f, 1f)
++                    return range.start + f * (range.endInclusive - range.start)
++                }
++                try {
++                    change(at(down.position.x))
++                    while (true) {
++                        val event = awaitPointerEvent()
++                        val pointer = event.changes.firstOrNull { it.id == down.id } ?: break
++                        if (pointer.isConsumed) break
++                        val v = at(pointer.position.x)
++                        pointer.consume()
++                        if (!pointer.pressed) {
++                            if (liveGestureKey == gestureKey) { committed = true; commit(v) }
++                            break
++                        }
++                        change(v)
++                    }
++                } finally {
++                    dragging = false
++                    if (!committed) cancel()
++                }
++            }
++        }) {
++        val inset = 5.dp.toPx()
++        val start = Offset(inset, size.height / 2)
++        val end = Offset((size.width - inset).coerceAtLeast(inset), start.y)
++        val thumb = Offset(start.x + (end.x - start.x) * fraction, start.y)
++        drawLine(Color(0xFF4D4D4D), start, end, 4.dp.toPx(), StrokeCap.Round)
++        if (fraction > 0f) drawLine(if (!enabled) Color(0xFF777777) else if (active) Color(0xFFF97316) else Color(0xFFF6F7F8),
++            start, thumb, 4.dp.toPx(), StrokeCap.Round)
++        if (active) drawCircle(Color(0xFFF6F7F8), 5.dp.toPx(), thumb)
++    }
++}
+--- a/src/test/java/app/ziziplayer/desktop/ui/DesktopLayoutChecks.java
++++ b/src/test/java/app/ziziplayer/desktop/ui/DesktopLayoutChecks.java
+@@ -18,10 +18,16 @@
+                 float artwork = DesktopLayout.artworkSize(gridWidth, columns);
+                 check(artwork >= 72 && artwork <= 184, "artwork bounds");
+                 check((artwork + 20) * columns + 12 * (columns - 1) <= gridWidth + .01, "grid overflow");
+-                check(center - 40 - (center < 680 ? 144 + 18 : 184 + 24) >= 300, "hero text too narrow");
++                check(center - 40 - (DesktopLayout.heroArtwork(center) + (center < 680 ? 18 : 24)) >= 280, "hero text too narrow");
+                 cases++;
+             }
+         }
++        check(DesktopLayout.transportWidth(1896) == 700, "reference center zone");
++        float center = DesktopLayout.transportWidth(1896);
++        // Symmetric 44dp timestamps; 5dp thumb insets, 2dp round track caps.
++        check(center - 88 - 10 + 4 == 606, "reference 606px painted progress at 1x");
++        check(DesktopLayout.heroArtwork(1000) == 232, "reference cover");
++        check(DesktopLayout.heroHeight(1000) == 316, "reference header");
+         check(DesktopLayout.sidebarWidth(960, 0, true) == 0, "hidden sidebar");
+         check(DesktopLayout.sidebarWidth(960, 2, true) == 64, "automatic rail");
+         check(DesktopLayout.sidebarWidth(1920, 2, true) == 300, "wide library");
+--- a/src/test/kotlin/app/ziziplayer/desktop/CatalogBrowseTest.kt
++++ b/src/test/kotlin/app/ziziplayer/desktop/CatalogBrowseTest.kt
+@@ -25,6 +25,20 @@
+             assertThrows(IllegalArgumentException::class.java) { client.collection(CatalogCollection("spotify:17", "artist", "Wrong")) }
+         } finally { server.stop(0) }
+     }
++    @Test fun catalogDurationUsesSecondsAndRejectsInvalidBounds() {
++        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
++        server.createContext("/catalog/search") { e ->
++            val body = """{"items":[{"id":"1","dur":98},{"id":"2","dur":0},{"id":"3","dur":-1},{"id":"4","dur":604801}]}""".toByteArray()
++            e.sendResponseHeaders(200, body.size.toLong()); e.responseBody.use { it.write(body) }
++        }
++        server.start()
++        try {
++            val client = ZiziClient("http://127.0.0.1:${server.address.port}", "")
++            val tracks = client.search("test")
++            assertEquals(98000L, tracks.first().durationMs)
++            assertTrue(tracks.drop(1).all { it.durationMs == null })
++        } finally { server.stop(0) }
++    }
+     @Test fun sourceMismatchIsRejected() {
+         val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+         server.createContext("/catalog/browse") { e ->
+--- /dev/null
++++ b/src/test/kotlin/app/ziziplayer/desktop/DesktopRefinementTest.kt
+@@ -0,0 +1,61 @@
++package app.ziziplayer.desktop
++
++import app.ziziplayer.desktop.ui.*
++import androidx.compose.ui.graphics.Color
++import kotlinx.coroutines.*
++import org.junit.Assert.*
++import org.junit.Test
++
++class DesktopRefinementTest {
++    @Test fun sameDockButtonClosesWithoutSelectingAnotherPanel() {
++        for (panel in DesktopDock.entries.filter { it != DesktopDock.NONE }) {
++            assertEquals(DesktopDock.NONE, panel.toggle(panel))
++            assertEquals(panel, DesktopDock.NONE.toggle(panel))
++        }
++    }
++    @Test fun switchingDocksHasOneOwnerForEveryTransition() {
++        for (from in DesktopDock.entries) for (to in DesktopDock.entries.filter { it != DesktopDock.NONE })
++            assertEquals(if (from == to) DesktopDock.NONE else to, from.toggle(to))
++    }
++    @Test fun rapidToggleSequenceNeverFallsThroughToEffects() {
++        var dock = DesktopDock.NONE
++        repeat(10000) {
++            dock = dock.toggle(DesktopDock.QUEUE)
++            assertEquals(DesktopDock.QUEUE, dock)
++            dock = dock.toggle(DesktopDock.QUEUE)
++            assertEquals(DesktopDock.NONE, dock)
++            dock = dock.toggle(DesktopDock.DEVICES)
++            assertEquals(DesktopDock.DEVICES, dock)
++            dock = dock.toggle(DesktopDock.DEVICES)
++        }
++    }
++    @Test fun gradientTailIsOpaqueAndReachesPanelExactly() {
++        val tone = collectionTone(0xFFDA2830.toInt())
++        assertEquals(tone, shadeCollectionTone(tone, 1f))
++        assertEquals(Color(0xFF101010), shadeCollectionTone(tone, 0f))
++        for (step in 0..100) assertEquals(1f, shadeCollectionTone(tone, step / 100f).alpha, .0001f)
++    }
++    @Test fun brokenSearchShelfDoesNotThrowAwaySiblingResults() = runBlocking {
++        supervisorScope {
++            val good = async { searchPart { listOf("real result") } }
++            val bad = async { searchPart<List<String>> { throw IllegalStateException("offline") } }
++            assertEquals(listOf("real result"), good.await().getOrNull())
++            assertTrue(bad.await().isFailure)
++        }
++    }
++    @Test fun cancelledSearchIsNotConvertedToEmptySuccess() = runBlocking {
++        try {
++            searchPart<List<String>> { throw CancellationException("superseded") }
++            fail("Cancellation must propagate")
++        } catch (_: CancellationException) { }
++    }
++    @Test fun systemOutputSelectionDoesNotInventAnActiveHeadset() {
++        val outputs = AudioOutputs()
++        assertNull(outputs.active.value)
++        outputs.select(OutputDevice("missing-for-test", "Test headphones"))
++        assertNull(outputs.active.value)
++        assertEquals("missing-for-test", outputs.selectedId)
++        outputs.select(null)
++        assertNull(outputs.selectedId)
++    }
++}
+--- a/tools/check_desktop_source.py
++++ b/tools/check_desktop_source.py
+@@ -12,6 +12,9 @@
+     model = read(prefix + 'desktop/ui/DesktopUi.kt')
+     preview = read(prefix + 'desktop/ui/SearchPreview.kt')
+     palette = read(prefix + 'desktop/ui/ArtworkPalette.kt')
++    slider = read(prefix + 'desktop/ui/ThinSlider.kt')
++    dock = read(prefix + 'desktop/ui/DesktopDock.kt')
++    outputs = read(prefix + 'desktop/AudioOutputs.kt')
+     store = read(prefix + 'desktop/LibraryStore.kt')
+     player = read(prefix + 'desktop/DesktopPlayer.kt')
+     offline = read(prefix + 'desktop/OfflineFiles.kt')
+@@ -40,16 +43,16 @@
+         'preview cancelled at shutdown': 'periodic?.cancel(); cancelPreview()' in model,
+         'preview does not persist history': 'recentSearches' not in preview and 'DesktopPreferences' not in preview,
+         'preview bounded and deduplicated': 'distinctBy { it.id }.take(6)' in preview,
+-        'transport brand orange independent of cover': 'primary = Brand' in ui and 'thumbColor = Brand, activeTrackColor = Brand' in ui,
+-        'one exclusive right dock': 'AnimatedVisibility(queueOpen || effects' in ui and 'QueuePanel(s, closing' in ui,
+-        'library collapse and full hide': 'sidebarMode = if (sidebarMode == 0) 2 else 0' in ui and 'sidebarMode = if (sidebarMode == 2) 1 else 2' in ui,
+-        'page header continuous through actions': 'actions: @Composable () -> Unit' in ui and '0f to tone, .58f to tone.copy(alpha = .60f), 1f to Panel' in ui,
++        'transport brand orange independent of cover': 'primary = Brand' in ui and '0xFFF97316' in slider and 'ThinSlider(value = drag' in ui,
++        'one exclusive right dock': 'mutableStateOf(DesktopDock.NONE)' in ui and 'when (dock)' in ui and 'NONE, QUEUE, EFFECTS, DEVICES' in dock and 'AnimatedVisibility' not in ui,
++        'library collapse and full hide': 'sidebarMode = lastVisibleSidebar' in ui and 'sidebarMode = if (sidebarMode == 2) 1 else 2' in ui,
++        'page header continuous through actions': 'actions: @Composable () -> Unit' in ui and 'collectionBackground(remote.collection.artworkTrack()' in ui and 'hero + 244.dp.toPx()' in ui and 'if (collapsed) Panel else Color.Transparent' in ui,
+         'page header honors artwork preference': 'if (s.prefs.artworkColor) collectionTone(cover?.primary)' in ui,
+-        'header hue and contrast bounded': 'lch[0].coerceIn(.36f, .50f)' in palette and 'lch[1].coerceAtMost(.15f)' in palette,
++        'header hue and contrast bounded': 'lch[0].coerceIn(.36f, .50f)' in palette and '(lch[1] * 1.18f).coerceAtMost(.22f)' in palette,
+         'artwork reload includes URL': 'null, track?.id, track?.artwork, track?.artworkUrl, api)' in ui,
+         'bounded locks coalesce cover misses': 'loadLocks = Array(32)' in ui and 'synchronized(loadLocks[' in ui,
+         'transport seek validates identity and generation': 'progress.trackId == state.track?.id && progress.generation == state.generation' in ui,
+-        'sticky collection header and dense rows': 'stickyHeader { TrackTableHeader' in ui and 'Artwork(track, s.client, 36.dp)' in ui,
++        'sticky collection header and dense rows': 'stickyHeader { TrackTableHeader' in ui and 'Artwork(track, s.client, 40.dp)' in ui,
+         'mobile refresh motion': 'tween(900, easing = LinearEasing)' in ui and 'tween(340, easing = FastOutSlowInEasing)' in ui,
+         'authenticated redirects remain disabled': 'instanceFollowRedirects = false' in network,
+         'HTTP opt-in checked by exact origin': 'sameOrigin(uri, legacyOrigin)' in network and 'resolver.allowHttp' in bundled,
+@@ -59,6 +62,22 @@
+         'auth backoff remains five minutes': 'retryAt = now + 300_000' in network,
+         'device 401 recovery bounded to one retry': 'if (e.code != 401) throw e' in network and 'return request()' in network,
+     }
++    checks.update({
++        'no constraint-width animations': 'animateDpAsState' not in ui and 'expandHorizontally' not in ui,
++        'dock state survives close': 'panelStates.SaveableStateProvider(dock.name)' in ui,
++        'slider thin paint and usable hit area': 'height(24.dp)' in slider and '4.dp.toPx(), StrokeCap.Round' in slider,
++        'slider cancellation and obsolete identity': 'if (!committed) cancel()' in slider and 'liveGestureKey == gestureKey' in slider,
++        'slider keyboard and accessibility': 'progressBarRangeInfo' in slider and 'setProgress' in slider and 'Key.MoveHome' in slider,
++        'seek callback checks live generation': 'live.generation == state.generation' in ui,
++        'audio devices are real mixers': 'AudioSystem.getMixerInfo()' in outputs and 'isLineSupported' in outputs,
++        'active output set only after sink opens': outputs.index('val sink = JavaSoundSink') < outputs.index('mutableActive.value = route'),
++        'closed old sink cannot clear new route': 'compareAndSet(route, null)' in outputs,
++        'output refresh scoped to panel': 'LaunchedEffect(refresh)' in ui and 'delay(5000)' in ui,
++        'search overview uses existing endpoints': 'api.browse(q, type)' in model and 'supervisorScope' in model,
++        'submitted search guards generations': 'token == searchGeneration' in model and 'ensureActive()' in model,
++        'discovery is grounded in library': 'distinctBy { it.artist.lowercase() }' in ui and 'SearchHub(s' in ui,
++        'catalog durations parsed in seconds': 'row.optLong("dur", 0)' in network and '?.times(1000)' in network,
++    })
+     upstream = json.loads(read('upstream.json'))
+     for item in upstream['files']:
+         checks['upstream hash: ' + item['path']] = hashlib.sha256((root/item['path']).read_bytes()).hexdigest() == item['sha256']
+--- a/tools/check_header_contrast_model.py
++++ b/tools/check_header_contrast_model.py
+@@ -5,7 +5,7 @@
+ M=np.array([[.4122214708,.5363325363,.0514459929],[.2119034982,.6806995451,.1073969566],[.0883024619,.2817188376,.6299787005]])
+ N=np.array([[.2104542553,.7936177850,-.0040720468],[1.9779984951,-2.4285922050,.4505937099],[.0259040371,.7827717662,-.8086757660]])
+ lab=np.cbrt(linear@M.T)@N.T
+-L=np.clip(lab[:,0],.36,.50); C=np.minimum(np.hypot(lab[:,1],lab[:,2]),.15); h=np.arctan2(lab[:,2],lab[:,1])
++L=np.clip(lab[:,0],.36,.50); C=np.minimum(np.hypot(lab[:,1],lab[:,2])*1.18,.22); h=np.arctan2(lab[:,2],lab[:,1])
+ def convert(L,C,h):
+  a=C*np.cos(h); b=C*np.sin(h)
+  l=(L+.3963377774*a+.2158037573*b)**3;m=(L-.1055613458*a-.0638541728*b)**3;s=(L-.0894841775*a-1.2914855480*b)**3

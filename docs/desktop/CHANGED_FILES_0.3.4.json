@@ -1,0 +1,107 @@
+[
+  {
+    "path": "README.md",
+    "before_sha256": "49b2f151261b080895ec24915ff6f7b3454079f84b4a6c25a1d91f06b4286d68",
+    "after_sha256": "eed36b01497e103ed49ba2630932e58990e6aa35dc1ee79b4543f394fc92c30d"
+  },
+  {
+    "path": "REVIEW_0.3.4.md",
+    "before_sha256": null,
+    "after_sha256": "d1ffa1ed0eae36a3331d66c48f28fb636acdfe5704b75bc9b590ed374dbcf480"
+  },
+  {
+    "path": "VALIDATION.md",
+    "before_sha256": "e0688398846777af4e78444d041db8c1e39d6f795a0205beba93c0fe3c35d6df",
+    "after_sha256": "ed1da235f619413477e0c4776e32d96f4b0db5ae753460aeed95f54079e4b14a"
+  },
+  {
+    "path": "build.gradle.kts",
+    "before_sha256": "c8681c100f0af49f1609444bb5275b902dc348060323b4bfe586bfb2c15aa7a0",
+    "after_sha256": "859081f17fc18a4a76da907886946aeec10edf5af20bab89b38e936609b58e62"
+  },
+  {
+    "path": "docs/legacy/from-0.3.3-README.md",
+    "before_sha256": null,
+    "after_sha256": "49b2f151261b080895ec24915ff6f7b3454079f84b4a6c25a1d91f06b4286d68"
+  },
+  {
+    "path": "docs/legacy/from-0.3.3-VALIDATION.md",
+    "before_sha256": null,
+    "after_sha256": "e0688398846777af4e78444d041db8c1e39d6f795a0205beba93c0fe3c35d6df"
+  },
+  {
+    "path": "src/main/java/app/ziziplayer/desktop/ui/DesktopLayout.java",
+    "before_sha256": "dabad70729a9da5932a9c4f5d68ad8091f7ef525f92e48c6330915a9b7b32212",
+    "after_sha256": "9fabe54cb1792b36756677daf61cecad10159c023175ff45368d03a92de20ed8"
+  },
+  {
+    "path": "src/main/kotlin/app/ziziplayer/desktop/AudioOutputs.kt",
+    "before_sha256": null,
+    "after_sha256": "8c9eba5933fe0bb26c543fa2570387d39718342197c8ecc8125078a21ebbc79e"
+  },
+  {
+    "path": "src/main/kotlin/app/ziziplayer/desktop/network/ZiziClient.kt",
+    "before_sha256": "21ec8f4d9bb5594690f19857b76ca78a2273e77451e592a2c79b73966afbeb64",
+    "after_sha256": "f6f5b9be89673a0e37ed9d296aa949bced19179ceabb5f9ed8230df977fd6915"
+  },
+  {
+    "path": "src/main/kotlin/app/ziziplayer/desktop/ui/ArtworkPalette.kt",
+    "before_sha256": "fc0992c11d7d4b90c83d5705a33b3cf291efde996ac9abc27bf0ffa383df278c",
+    "after_sha256": "d679b3110aaba97115e1fc180faaa34599c591d303b28bf88248904c45927626"
+  },
+  {
+    "path": "src/main/kotlin/app/ziziplayer/desktop/ui/DesktopDock.kt",
+    "before_sha256": null,
+    "after_sha256": "95a483b4412e0cc6378ff46f178a38aa89b8e6bc7aa70997f9895e6ed03006ed"
+  },
+  {
+    "path": "src/main/kotlin/app/ziziplayer/desktop/ui/DesktopIcons.kt",
+    "before_sha256": null,
+    "after_sha256": "f5bd3d489bb53807fdf68fa0821953211baff869b42f9d969e650cdf19b86c35"
+  },
+  {
+    "path": "src/main/kotlin/app/ziziplayer/desktop/ui/DesktopMain.kt",
+    "before_sha256": "b9dd77ea0699ad164ed41d600460523a123441099302e149fa2e2c9074a16dd7",
+    "after_sha256": "cd3de795c9ad66ca055d5d37fc6876cfee068a241ce0fddd9be4eb5ba7f1d64f"
+  },
+  {
+    "path": "src/main/kotlin/app/ziziplayer/desktop/ui/DesktopUi.kt",
+    "before_sha256": "9e44ea572dafad841fbd260d48a5efdc06ffa27632697e5e017c864ea7032552",
+    "after_sha256": "8930d65298c3eab64ac6e920ae731a93891ae098ddbc60ab7d44fbc296878867"
+  },
+  {
+    "path": "src/main/kotlin/app/ziziplayer/desktop/ui/SearchPart.kt",
+    "before_sha256": null,
+    "after_sha256": "a8927df24f36a39125fc0bb86dffc42f33d7c9ee601fe4cc9fa365bcf5a7b930"
+  },
+  {
+    "path": "src/main/kotlin/app/ziziplayer/desktop/ui/ThinSlider.kt",
+    "before_sha256": null,
+    "after_sha256": "7fd63c8a81f71e9440a298b1b42347864fa03d42d7d176ed7be535535c1522b5"
+  },
+  {
+    "path": "src/test/java/app/ziziplayer/desktop/ui/DesktopLayoutChecks.java",
+    "before_sha256": "a7338533341d71830d5b7d3188006fd87fa3736f297954dc4e9d4a8e8ca3c6dc",
+    "after_sha256": "cfe71d444399e5dcb0f2f606b12f4463d0fa7fd861f7d546bc64396bea27a15a"
+  },
+  {
+    "path": "src/test/kotlin/app/ziziplayer/desktop/CatalogBrowseTest.kt",
+    "before_sha256": "7b510e2c21abe50c7bea7d6a32d5e7df327459729fe6c1efa2cb6fca5d901788",
+    "after_sha256": "c017145d34c1e198ef9f678d6f4ddfc9d800655010ecd5068a19e40711c56bb1"
+  },
+  {
+    "path": "src/test/kotlin/app/ziziplayer/desktop/DesktopRefinementTest.kt",
+    "before_sha256": null,
+    "after_sha256": "41d67f461d1587865236945e04c64e7503247514d0c5161745134d7046b907d5"
+  },
+  {
+    "path": "tools/check_desktop_source.py",
+    "before_sha256": "bf1596b95ba32ac220ae5847c7919ad17f6af15ebc31e782cb474e85ab87288d",
+    "after_sha256": "24206a7a9e996f3412f859062bed2f4efa46f5124faf222d52fa1faa700d54e2"
+  },
+  {
+    "path": "tools/check_header_contrast_model.py",
+    "before_sha256": "0ac531950bad3e12ac5c2e807f4e2ec960e3b8deb67be6699a738e943e6d6ac4",
+    "after_sha256": "ac8947bf7e1cd9db135253ff425fd8ec95b03a36e81ab6f896bac00bfb71f033"
+  }
+]

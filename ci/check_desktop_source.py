@@ -12,6 +12,9 @@ def check(root: Path):
     model = read(prefix + 'desktop/ui/DesktopUi.kt')
     preview = read(prefix + 'desktop/ui/SearchPreview.kt')
     palette = read(prefix + 'desktop/ui/ArtworkPalette.kt')
+    slider = read(prefix + 'desktop/ui/ThinSlider.kt')
+    dock = read(prefix + 'desktop/ui/DesktopDock.kt')
+    outputs = read(prefix + 'desktop/AudioOutputs.kt')
     store = read(prefix + 'desktop/LibraryStore.kt')
     player = read(prefix + 'desktop/DesktopPlayer.kt')
     offline = read(prefix + 'desktop/OfflineFiles.kt')
@@ -40,16 +43,16 @@ def check(root: Path):
         'preview cancelled at shutdown': 'periodic?.cancel(); cancelPreview()' in model,
         'preview does not persist history': 'recentSearches' not in preview and 'DesktopPreferences' not in preview,
         'preview bounded and deduplicated': 'distinctBy { it.id }.take(6)' in preview,
-        'transport brand orange independent of cover': 'primary = Brand' in ui and 'thumbColor = Brand, activeTrackColor = Brand' in ui,
-        'one exclusive right dock': 'AnimatedVisibility(queueOpen || effects' in ui and 'QueuePanel(s, closing' in ui,
-        'library collapse and full hide': 'sidebarMode = if (sidebarMode == 0) 2 else 0' in ui and 'sidebarMode = if (sidebarMode == 2) 1 else 2' in ui,
-        'page header continuous through actions': 'actions: @Composable () -> Unit' in ui and '0f to tone, .58f to tone.copy(alpha = .60f), 1f to Panel' in ui,
+        'transport brand orange independent of cover': 'primary = Brand' in ui and '0xFFF97316' in slider and 'ThinSlider(value = drag' in ui,
+        'one exclusive right dock': 'mutableStateOf(DesktopDock.NONE)' in ui and 'when (dock)' in ui and 'NONE, QUEUE, EFFECTS, DEVICES' in dock and 'AnimatedVisibility' not in ui,
+        'library collapse and full hide': 'sidebarMode = lastVisibleSidebar' in ui and 'sidebarMode = if (sidebarMode == 2) 1 else 2' in ui,
+        'page header continuous through actions': 'actions: @Composable () -> Unit' in ui and 'collectionBackground(remote.collection.artworkTrack()' in ui and 'hero + 244.dp.toPx()' in ui and 'if (collapsed) Panel else Color.Transparent' in ui,
         'page header honors artwork preference': 'if (s.prefs.artworkColor) collectionTone(cover?.primary)' in ui,
-        'header hue and contrast bounded': 'lch[0].coerceIn(.36f, .50f)' in palette and 'lch[1].coerceAtMost(.15f)' in palette,
+        'header hue and contrast bounded': 'lch[0].coerceIn(.36f, .50f)' in palette and '(lch[1] * 1.18f).coerceAtMost(.22f)' in palette,
         'artwork reload includes URL': 'null, track?.id, track?.artwork, track?.artworkUrl, api)' in ui,
         'bounded locks coalesce cover misses': 'loadLocks = Array(32)' in ui and 'synchronized(loadLocks[' in ui,
         'transport seek validates identity and generation': 'progress.trackId == state.track?.id && progress.generation == state.generation' in ui,
-        'sticky collection header and dense rows': 'stickyHeader { TrackTableHeader' in ui and 'Artwork(track, s.client, 36.dp)' in ui,
+        'sticky collection header and dense rows': 'stickyHeader { TrackTableHeader' in ui and 'Artwork(track, s.client, 40.dp)' in ui,
         'mobile refresh motion': 'tween(900, easing = LinearEasing)' in ui and 'tween(340, easing = FastOutSlowInEasing)' in ui,
         'authenticated redirects remain disabled': 'instanceFollowRedirects = false' in network,
         'HTTP opt-in checked by exact origin': 'sameOrigin(uri, legacyOrigin)' in network and 'resolver.allowHttp' in bundled,
@@ -59,6 +62,22 @@ def check(root: Path):
         'auth backoff remains five minutes': 'retryAt = now + 300_000' in network,
         'device 401 recovery bounded to one retry': 'if (e.code != 401) throw e' in network and 'return request()' in network,
     }
+    checks.update({
+        'no constraint-width animations': 'animateDpAsState' not in ui and 'expandHorizontally' not in ui,
+        'dock state survives close': 'panelStates.SaveableStateProvider(dock.name)' in ui,
+        'slider thin paint and usable hit area': 'height(24.dp)' in slider and '4.dp.toPx(), StrokeCap.Round' in slider,
+        'slider cancellation and obsolete identity': 'if (!committed) cancel()' in slider and 'liveGestureKey == gestureKey' in slider,
+        'slider keyboard and accessibility': 'progressBarRangeInfo' in slider and 'setProgress' in slider and 'Key.MoveHome' in slider,
+        'seek callback checks live generation': 'live.generation == state.generation' in ui,
+        'audio devices are real mixers': 'AudioSystem.getMixerInfo()' in outputs and 'isLineSupported' in outputs,
+        'active output set only after sink opens': outputs.index('val sink = JavaSoundSink') < outputs.index('mutableActive.value = route'),
+        'closed old sink cannot clear new route': 'compareAndSet(route, null)' in outputs,
+        'output refresh scoped to panel': 'LaunchedEffect(refresh)' in ui and 'delay(5000)' in ui,
+        'search overview uses existing endpoints': 'api.browse(q, type)' in model and 'supervisorScope' in model,
+        'submitted search guards generations': 'token == searchGeneration' in model and 'ensureActive()' in model,
+        'discovery is grounded in library': 'distinctBy { it.artist.lowercase() }' in ui and 'SearchHub(s' in ui,
+        'catalog durations parsed in seconds': 'row.optLong("dur", 0)' in network and '?.times(1000)' in network,
+    })
     upstream = json.loads(read('upstream.json'))
     for item in upstream['files']:
         checks['upstream hash: ' + item['path']] = hashlib.sha256((root/item['path']).read_bytes()).hexdigest() == item['sha256']

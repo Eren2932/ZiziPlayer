@@ -1,0 +1,157 @@
+$ /opt/venv/bin/python tools/check_kotlin_syntax.py .
+files with issues: 0
+
+Exit: 0
+
+$ /opt/venv/bin/python tools/check_desktop_source.py
+PASS collection-only spatial gradient with black shell
+PASS mobile surface, chip and text colors
+PASS no server or bootstrap input in settings
+PASS bundled client attached to player on startup
+PASS manual preference not used for bootstrap origin
+PASS audio settings do not replace network client
+PASS settings hub replaces connection form
+PASS single serialized library writer
+PASS atomic replacement plus sync and backup
+PASS unknown schema remains read only
+PASS repeat executes after decoder completion
+PASS queue reorder observable and identity based
+PASS offline uses scoped transport and partial file
+PASS mobile DSP persistence codec
+PASS desktop centered pill and exactly aligned popup
+PASS preview independent from submitted search
+PASS preview debounce and obsolete-response guard
+PASS preview cancelled at shutdown
+PASS preview does not persist history
+PASS preview bounded and deduplicated
+PASS transport brand orange independent of cover
+PASS one exclusive right dock
+PASS library collapse and full hide
+PASS page header continuous through actions
+PASS page header honors artwork preference
+PASS header hue and contrast bounded
+PASS artwork reload includes URL
+PASS bounded locks coalesce cover misses
+PASS transport seek validates identity and generation
+PASS sticky collection header and dense rows
+PASS mobile refresh motion
+PASS authenticated redirects remain disabled
+PASS HTTP opt-in checked by exact origin
+PASS stream bridge uses same scoped policy
+PASS bootstrap comes from build environment
+PASS device key cache wired to auth exchange
+PASS auth backoff remains five minutes
+PASS device 401 recovery bounded to one retry
+PASS no constraint-width animations
+PASS dock state survives close
+PASS slider thin paint and usable hit area
+PASS slider cancellation and obsolete identity
+PASS slider keyboard and accessibility
+PASS seek callback checks live generation
+PASS audio devices are real mixers
+PASS active output set only after sink opens
+PASS closed old sink cannot clear new route
+PASS output refresh scoped to panel
+PASS search overview uses existing endpoints
+PASS submitted search guards generations
+PASS discovery is grounded in library
+PASS catalog durations parsed in seconds
+PASS upstream hash: src/main/kotlin/app/ziziplayer/playback/dsp/Biquad.kt
+PASS upstream hash: src/main/kotlin/app/ziziplayer/playback/dsp/DspConfig.kt
+PASS upstream hash: src/main/kotlin/app/ziziplayer/playback/dsp/DspEngine.kt
+PASS upstream hash: src/main/kotlin/app/ziziplayer/playback/dsp/DspPresets.kt
+PASS upstream hash: src/main/kotlin/app/ziziplayer/ui/components/ZiziIcons.kt
+PASS upstream hash: src/main/kotlin/app/ziziplayer/ui/SearchPresentation.kt
+PASS upstream hash: src/main/java/app/ziziplayer/ui/theme/ArtworkColorMath.java
+59 static contracts passed. Compilation/runtime tests are separate.
+
+Exit: 0
+
+$ /usr/lib/jvm/default-java/bin/java tools/RunZiziChecks.java .
+PASS: 19 real JVM math cases; 4096-colour contrast grid; deterministic random samples.
+Not an Android build, Compose render or device performance measurement.
+PASS 17286 production layout configurations (not a Compose render)
+
+Exit: 0
+
+$ /opt/venv/bin/python tools/check_header_contrast_model.py
+Independent 4096-colour Oklch model: minimum solid text contrast = 5.221001687721316
+
+Exit: 0
+
+Python connection tests:
+.........
+----------------------------------------------------------------------
+Ran 9 tests in 0.001s
+
+OK
+
+$ /opt/venv/bin/python /tmp/update/ci/check_desktop_source.py
+PASS collection-only spatial gradient with black shell
+PASS mobile surface, chip and text colors
+PASS no server or bootstrap input in settings
+PASS bundled client attached to player on startup
+PASS manual preference not used for bootstrap origin
+PASS audio settings do not replace network client
+PASS settings hub replaces connection form
+PASS single serialized library writer
+PASS atomic replacement plus sync and backup
+PASS unknown schema remains read only
+PASS repeat executes after decoder completion
+PASS queue reorder observable and identity based
+PASS offline uses scoped transport and partial file
+PASS mobile DSP persistence codec
+PASS desktop centered pill and exactly aligned popup
+PASS preview independent from submitted search
+PASS preview debounce and obsolete-response guard
+PASS preview cancelled at shutdown
+PASS preview does not persist history
+PASS preview bounded and deduplicated
+PASS transport brand orange independent of cover
+PASS one exclusive right dock
+PASS library collapse and full hide
+PASS page header continuous through actions
+PASS page header honors artwork preference
+PASS header hue and contrast bounded
+PASS artwork reload includes URL
+PASS bounded locks coalesce cover misses
+PASS transport seek validates identity and generation
+PASS sticky collection header and dense rows
+PASS mobile refresh motion
+PASS authenticated redirects remain disabled
+PASS HTTP opt-in checked by exact origin
+PASS stream bridge uses same scoped policy
+PASS bootstrap comes from build environment
+PASS device key cache wired to auth exchange
+PASS auth backoff remains five minutes
+PASS device 401 recovery bounded to one retry
+PASS no constraint-width animations
+PASS dock state survives close
+PASS slider thin paint and usable hit area
+PASS slider cancellation and obsolete identity
+PASS slider keyboard and accessibility
+PASS seek callback checks live generation
+PASS audio devices are real mixers
+PASS active output set only after sink opens
+PASS closed old sink cannot clear new route
+PASS output refresh scoped to panel
+PASS search overview uses existing endpoints
+PASS submitted search guards generations
+PASS discovery is grounded in library
+PASS catalog durations parsed in seconds
+PASS upstream hash: src/main/kotlin/app/ziziplayer/playback/dsp/Biquad.kt
+PASS upstream hash: src/main/kotlin/app/ziziplayer/playback/dsp/DspConfig.kt
+PASS upstream hash: src/main/kotlin/app/ziziplayer/playback/dsp/DspEngine.kt
+PASS upstream hash: src/main/kotlin/app/ziziplayer/playback/dsp/DspPresets.kt
+PASS upstream hash: src/main/kotlin/app/ziziplayer/ui/components/ZiziIcons.kt
+PASS upstream hash: src/main/kotlin/app/ziziplayer/ui/SearchPresentation.kt
+PASS upstream hash: src/main/java/app/ziziplayer/ui/theme/ArtworkColorMath.java
+59 static contracts passed. Compilation/runtime tests are separate.
+
+Exit: 0
+
+PASS original ci/extract_desktop.py accepted new manifest/source ZIP; every extracted file equals working source.
+PASS original manifest SHA verified.
+PASS unchanged DesktopPlayer/Sink/LibraryStore and 7 upstream files.
+Kotlin/Compose compilation, JUnit/audio tests and Windows render: NOT RUN.
+No GitHub push or Actions run performed.
