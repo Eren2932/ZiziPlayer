@@ -13,7 +13,11 @@ on:
         default: ''
   push:
     branches: [main, master]
-    tags: ['v*']
+    # Android updates remain ZIP-based. Desktop/docs-only pushes do not build APK.
+    paths:
+      - 'ZiziPlayer-v*.zip'
+      - '.github/workflows/build.yml'
+    tags: ['v[0-9]*']
   release:
     types: [published]
 
@@ -23,14 +27,36 @@ permissions:
   contents: write
 
 concurrency:
-  group: zizi-build-${{ github.ref }}
+  group: zizi-android-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   build:
+    # release events have no paths filter: explicitly exclude desktop-v* releases.
+    if: github.event_name != 'release' || startsWith(github.event.release.tag_name, 'v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Validate Android release namespace
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          ATTACH_TAG: ${{ inputs.attach_to_tag }}
+        run: |
+          set -euo pipefail
+          tag=""
+          case "$EVENT_NAME" in
+            release) tag="$RELEASE_TAG" ;;
+            push) if [ "$REF_TYPE" = "tag" ]; then tag="$REF_NAME"; fi ;;
+            workflow_dispatch) tag="$ATTACH_TAG" ;;
+          esac
+          if [ -n "$tag" ] && ! [[ "$tag" =~ ^v[0-9][A-Za-z0-9._+-]*$ ]]; then
+            echo "::error::Android release tags must be v<version>. Use desktop-v<version> only for desktop releases."
+            exit 1
+          fi
 
       - name: Unpack source zip by versionCode
         run: |
@@ -299,13 +325,24 @@ jobs:
       # и ручной догон уже существующего релиза (attach_to_tag).
       - name: Determine release tag
         id: rel
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          ATTACH_TAG: ${{ inputs.attach_to_tag }}
         run: |
+          set -euo pipefail
           tag=""
-          case "${{ github.event_name }}" in
-            push)     [[ "${{ github.ref }}" == refs/tags/* ]] && tag="${{ github.ref_name }}" ;;
-            release)  tag="${{ github.event.release.tag_name }}" ;;
-            workflow_dispatch) tag="${{ github.event.inputs.attach_to_tag }}" ;;
+          case "$EVENT_NAME" in
+            push) if [ "$REF_TYPE" = "tag" ]; then tag="$REF_NAME"; fi ;;
+            release) tag="$RELEASE_TAG" ;;
+            workflow_dispatch) tag="$ATTACH_TAG" ;;
           esac
+          if [ -n "$tag" ] && ! [[ "$tag" =~ ^v[0-9][A-Za-z0-9._+-]*$ ]]; then
+            echo "::error::Refusing non-Android release tag."
+            exit 1
+          fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           [ -n "$tag" ] && echo "::notice::APK поедет в релиз $tag" || echo "::notice::релиз не трогаю, APK только в артефактах"
 
