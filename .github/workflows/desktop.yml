@@ -1,9 +1,14 @@
 name: Build Zizi Desktop Windows preview (manual)
 
 # Start manually after merging this file into the default branch.
-# No automatic Release upload, no Android signing/resolver secrets.
+# No automatic Release upload. Resolver bootstrap is shared with Android; signing secrets are not used.
 on:
   workflow_dispatch:
+    inputs:
+      allow_http:
+        description: 'Allow unencrypted legacy HTTP to the bundled resolver only'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -25,6 +30,15 @@ jobs:
 
       - name: Verify and extract desktop ZIP
         run: python ci/extract_desktop.py
+
+      - name: Source contract checks
+        run: |
+          python ci/check_desktop_source.py
+          if ($LASTEXITCODE -ne 0) { throw 'Source contracts failed' }
+          python ci/test_desktop_connection.py
+          if ($LASTEXITCODE -ne 0) { throw 'Preflight tests failed' }
+          python "$env:DESKTOP_PROJECT/tools/check_kotlin_syntax.py" "$env:DESKTOP_PROJECT"
+          if ($LASTEXITCODE -ne 0) { throw 'Source delimiter checks failed' }
 
       - uses: actions/setup-java@v4
         with:
@@ -50,8 +64,14 @@ jobs:
 
       - name: Required audio tests and Windows app-image
         shell: pwsh
+        env:
+          RESOLVER_URL: ${{ vars.RESOLVER_URL || '147.45.166.244:8080' }}
+          RESOLVER_TOKEN: ${{ secrets.RESOLVER_TOKEN }}
+          DESKTOP_ALLOW_HTTP: ${{ (inputs.allow_http || vars.DESKTOP_ALLOW_HTTP == 'true') && 'true' || 'false' }}
         run: |
           $ErrorActionPreference = 'Stop'
+          python ci/check_desktop_connection.py
+          if ($LASTEXITCODE -ne 0) { throw 'Desktop connection configuration is invalid; see safe preflight message.' }
           $gradleExe = (Get-Command gradle.bat -ErrorAction Stop).Source
           $gradleHome = Split-Path (Split-Path $gradleExe -Parent) -Parent
           & "$env:DESKTOP_PROJECT/Build-Desktop.ps1" -Action package -GradleHome $gradleHome -FfmpegPath $env:FFMPEG_PATH
