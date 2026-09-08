@@ -1,0 +1,15 @@
+PASS: Android source selector unchanged byte-for-byte.
+PASS: bash -n for all 11 Android multiline run blocks.
+PASS: real Android ZIP selected with desktop ZIP at root.
+PASS: real Android ZIP selected with desktop ZIP at nested.
+PASS: real desktop source checksum/extraction/project validation.
+PASS: desktop extractor rejects checksum before extraction.
+PASS: desktop extractor rejects traversal before extraction.
+PASS: desktop extractor rejects drive before extraction.
+PASS: desktop extractor rejects casecollision before extraction.
+PASS: desktop extractor rejects symlink before extraction.
+PASS: desktop extractor rejects reserved before extraction.
+PASS: desktop extractor rejects missing before extraction.
+PASS: 6 real bash release-namespace validation cases (including desktop rejection).
+
+NOT EXECUTED: GitHub Actions workflow engine, YAML-parser validation, PowerShell/Windows runner, JDK/Compose build, new Windows CI FFmpeg installation.
