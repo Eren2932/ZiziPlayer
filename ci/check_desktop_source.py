@@ -10,6 +10,8 @@ def check(root: Path):
     prefix = 'src/main/kotlin/app/ziziplayer/'
     ui = read(prefix + 'desktop/ui/DesktopMain.kt')
     model = read(prefix + 'desktop/ui/DesktopUi.kt')
+    preview = read(prefix + 'desktop/ui/SearchPreview.kt')
+    palette = read(prefix + 'desktop/ui/ArtworkPalette.kt')
     store = read(prefix + 'desktop/LibraryStore.kt')
     player = read(prefix + 'desktop/DesktopPlayer.kt')
     offline = read(prefix + 'desktop/OfflineFiles.kt')
@@ -18,7 +20,7 @@ def check(root: Path):
     bridge = read(prefix + 'desktop/network/StreamBridge.kt')
     build = read('build.gradle.kts')
     checks = {
-        'matte UI has no gradient brush': 'Brush.verticalGradient' not in ui and 'private val Base = Color.Black' in ui,
+        'collection-only spatial gradient with black shell': 'Brush.verticalGradient' in ui and 'private val Base = Color.Black' in ui and 'collectionTone(cover?.primary)' in ui,
         'mobile surface, chip and text colors': all(x in ui for x in ('0xFF101010', '0xFF1B1B1B', '0xFFF6F7F8')),
         'no server or bootstrap input in settings': 'Bootstrap-токен' not in ui and 'HTTPS-адрес сервера' not in ui and 'fun connect(' not in ui,
         'bundled client attached to player on startup': 'BundledConnection.load()' in model and 'player.client = api' in model,
@@ -32,7 +34,22 @@ def check(root: Path):
         'queue reorder observable and identity based': 'queueState: StateFlow' in player and 'fun move(id: String' in player,
         'offline uses scoped transport and partial file': 'target.legacyOrigin' in offline and '.part' in offline and 'INCOMPLETE_DOWNLOAD' in offline,
         'mobile DSP persistence codec': 'DspCodec.encode' in model and 'DspCodec.decode' in model,
-        'mobile search geometry': 'RoundedCornerShape(3.5.dp)' in ui and '49.5.dp' in ui and 'fontSize = 17.sp' in ui,
+        'desktop centered pill and exactly aligned popup': 'width(searchWidth)' in ui and 'width = searchWidth' in ui and '24.dp else 6.dp' in ui and 'PopupProperties(focusable = false)' in ui,
+        'preview independent from submitted search': 'SearchPreview(scope' in model and 'fun preview(raw: String) = previews.request(raw)' in model,
+        'preview debounce and obsolete-response guard': 'debounceMs: Long = 320' in preview and 'delay(debounceMs)' in preview and 'ensureActive()' in preview and 'token == generation' in preview,
+        'preview cancelled at shutdown': 'periodic?.cancel(); cancelPreview()' in model,
+        'preview does not persist history': 'recentSearches' not in preview and 'DesktopPreferences' not in preview,
+        'preview bounded and deduplicated': 'distinctBy { it.id }.take(6)' in preview,
+        'transport brand orange independent of cover': 'primary = Brand' in ui and 'thumbColor = Brand, activeTrackColor = Brand' in ui,
+        'one exclusive right dock': 'AnimatedVisibility(queueOpen || effects' in ui and 'QueuePanel(s, closing' in ui,
+        'library collapse and full hide': 'sidebarMode = if (sidebarMode == 0) 2 else 0' in ui and 'sidebarMode = if (sidebarMode == 2) 1 else 2' in ui,
+        'page header continuous through actions': 'actions: @Composable () -> Unit' in ui and '0f to tone, .58f to tone.copy(alpha = .60f), 1f to Panel' in ui,
+        'page header honors artwork preference': 'if (s.prefs.artworkColor) collectionTone(cover?.primary)' in ui,
+        'header hue and contrast bounded': 'lch[0].coerceIn(.36f, .50f)' in palette and 'lch[1].coerceAtMost(.15f)' in palette,
+        'artwork reload includes URL': 'null, track?.id, track?.artwork, track?.artworkUrl, api)' in ui,
+        'bounded locks coalesce cover misses': 'loadLocks = Array(32)' in ui and 'synchronized(loadLocks[' in ui,
+        'transport seek validates identity and generation': 'progress.trackId == state.track?.id && progress.generation == state.generation' in ui,
+        'sticky collection header and dense rows': 'stickyHeader { TrackTableHeader' in ui and 'Artwork(track, s.client, 36.dp)' in ui,
         'mobile refresh motion': 'tween(900, easing = LinearEasing)' in ui and 'tween(340, easing = FastOutSlowInEasing)' in ui,
         'authenticated redirects remain disabled': 'instanceFollowRedirects = false' in network,
         'HTTP opt-in checked by exact origin': 'sameOrigin(uri, legacyOrigin)' in network and 'resolver.allowHttp' in bundled,
