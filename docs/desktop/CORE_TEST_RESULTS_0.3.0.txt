@@ -1,0 +1,13 @@
+Supplementary core-only validation. NOT a Gradle/Compose/Windows build.
+
+JUnit version 4.13.2
+...................................
+Time: 3.49
+
+OK (35 tests)
+
+
+10 additional runs of DesktopTransportTest: all 16 tests passed in each run.
+Mobile Kotlin syntax heuristic: files with issues: 0.
+Original DSP and ZiziIcons SHA-256: all match upstream.json.
+Mobile source archive SHA-256: unchanged.

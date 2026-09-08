@@ -1,0 +1,6 @@
+Source SHA-256: 95973d07e74068800901e44a5d73ae4655d4d4f86334492816948dc0f2ff5cdc
+Existing ci/extract_desktop.py accepted manifest and archive.
+All extracted source files byte-identical.
+Desktop workflow moved from root to .github/workflows, content unchanged.
+Android workflow and Android source untouched.
+GitHub Actions not executed.

@@ -1,6 +1,6 @@
 {
-  "version": "0.2.0-preview",
-  "source_zip": "desktop/releases/ZiziDesktop-0.2.0-preview-source.zip",
-  "sha256": "85e8622c8a03e2e5182192e6fc97ede990ae03d14b1690937074d038f8d959dc",
-  "project_directory": "ZiziDesktop-0.2.0-preview"
+  "version": "0.3.0-preview",
+  "source_zip": "desktop/releases/ZiziDesktop-0.3.0-preview-source.zip",
+  "sha256": "95973d07e74068800901e44a5d73ae4655d4d4f86334492816948dc0f2ff5cdc",
+  "project_directory": "ZiziDesktop-0.3.0-preview"
 }
