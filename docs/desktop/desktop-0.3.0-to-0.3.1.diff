@@ -1,0 +1,1144 @@
+--- a/README.md
++++ b/README.md
+@@ -1,43 +1,43 @@
+-# Zizi Desktop 0.3.0-preview — transport & server integration candidate
++# Zizi Desktop 0.3.1-preview — установка обновления исходников
+ 
+-Срез исходников на базе Desktop 0.2.0-preview и мобильной 6.39.9. Это кандидат для сборки и Windows-приёмки, не готовый EXE и не заявление о паритете с Android.
++Это подготовленное обновление исходников, а не скомпилированный EXE. Kotlin/Compose-сборка и Windows-тесты в этой сессии НЕ запускались. Рабочую 0.3.0 не удалять до успешной сборки и проверки новой версии.
+ 
+-## Что реализовано
++## Как перенести в GitHub
+ 
+-Контроллер DesktopPlayer отделён от Compose. Состояние и прогресс публикуются раздельными StateFlow с trackId и generation. Новая команда инвалидирует поздние события старого сеанса; освобождение ресурсов сериализовано. Пауза останавливает SourceDataLine, сохраняет его очередь и не пересоздаёт FFmpeg. Прогресс берётся из счётчика устройства, а не числа декодированных кадров. Это оценка позиции драйвера, а не измерение физического звука у динамика.
++Распаковать `ZiziDesktop-0.3.1-repo-update.zip` и добавить его содержимое в корень Eren2932/ZiziPlayer с сохранением путей. В том числе заменить `.github/workflows/desktop.yml` и `desktop/current.json`, добавить `desktop/releases/ZiziDesktop-0.3.1-preview-source.zip`, обновлённые CI-скрипты и документы. Загрузить один внешний ZIP в корень недостаточно: текущий CI читает `desktop/current.json`, а не выбирает самый новый ZIP по имени.
+ 
+-Перемотка закрывает старый декодер/вывод/мост, очищая старый звук, затем запускает FFmpeg с входным -ss. Состояние паузы сохраняется. Во время seek показывается целевая позиция, затем её уточняет новый счётчик устройства; это не обещание мгновенной слышимости. Без известной длительности перемотка отключена. EOF отличен от ошибки; нормальный EOF переводит к следующему треку очереди. Профиль DSP и громкость переживают переключение.
++Android ZIP и Android workflow пакет не меняет. Старый desktop ZIP оставлен доступным для отката. Ничего в GitHub автоматически не опубликовано.
+ 
+-Сетевой путь: /catalog/search?src=deezer → zizi://dz/ID → /match/deezer → /resolve → /stream. Для zizi://yt/VIDEO_ID сопоставление не нужно. Поддержаны мобильные zizi://mix/dz%3AID и zizi://mix/yt%3AVIDEO_ID. Ссылки вводятся внутри приложения; системная регистрация протокола Windows пока не сделана. Поиск здесь только по трекам Deezer; мобильные YouTube-поиск, browse, альбомы и плейлисты ещё не перенесены. Метаданные Deezer не означают, что аудио взято из Deezer: поток идёт через серверный YouTube-тракт.
++## Параметры подключения задаются один раз при сборке
+ 
+-Настройки принимают HTTPS-адрес и bootstrap-токен. GET /auth/device выдаёт ключ установки; X-Zizi-Install отправляется во всех серверных запросах. UUID сохраняется, оба токена — только в памяти. Повторное применение настроек заменяет токен: его нужно ввести снова. Обновление по TTL, ограничение частоты неуспешного обмена и bootstrap fallback соответствуют идее мобильного клиента. Это не аккаунт пользователя и не синхронизация.
++В Settings → Secrets and variables → Actions используется тот же **secret `RESOLVER_TOKEN`**, что у Android. Не переносить значение в Variables, в workflow, в исходники или в переписку. Если secret отсутствует, сборка специально остановится с безопасным сообщением.
+ 
+-FFmpeg/ffprobe видят только одноразовый loopback-адрес. Настоящий URL и Authorization остаются в JVM. Мост привязан к одному источнику, сохраняет HEAD/Range/Content-Range, не пересылает редиректы и блокирует HLS/DASH. Демультиплексоры FFmpeg ограничены progressive-аудиоформатами. Loopback URL — локальная capability; защита от другого вредоносного процесса того же пользователя не заявляется. Токены/исходные URL не выводятся в ошибки и диагностику.
++**Variable `RESOLVER_URL`** — тот же сервер, что у Android; допустим адрес с `https://`, `http://` либо без схемы. Для отсутствующей переменной workflow использует адрес по умолчанию из изученного Android 6.39.9. Это совместимость исходников, а не подтверждение актуальности адреса на VPS.
+ 
+-UI: боковые Медиатека/Поиск/Очередь, постоянный нижний транспорт, раскрываемая панель DSP, обложки и фон из их усреднённого цвета. Переиспользованы оригинальные ZiziIcons. FFprobe читает локальные теги и длительность; FFmpeg извлекает локальную обложку. Серверные обложки загружаются через /img. Есть ограниченный in-memory кэш изображений и метаданных прослушанных локальных файлов; фонового сканирования всех файлов пока нет. Пробел управляет плеером вне текстового поля; Enter запускает поиск.
++В Actions → Build Zizi Desktop Windows preview (manual) → Run workflow:
+ 
+-## Сборка Windows
++1. Для HTTPS оставить `allow_http` выключенным.
++2. Если действующий сервер действительно HTTP, включить `allow_http`. Можно вместо этого один раз задать repository variable `DESKTOP_ALLOW_HTTP=true`.
++3. Запустить сборку. Preflight не выведет ни адрес, ни токен. Без HTTP opt-in внешний HTTP намеренно не проходит: причина будет явно указана в логе.
+ 
+-Нужны JDK 21, Gradle 8.11.1, FFmpeg и лежащий рядом ffprobe. Штатные Kotlin 2.1.0, Compose 1.7.3, coroutines-swing 1.9.0 сохранены. Вспомогательная Linux-проверка не меняет эти зависимости.
++HTTP opt-in разрешает незашифрованное соединение **только с origin из сборки** (схема, хост, порт). Прямые произвольные HTTP-ссылки остаются запрещены, перенаправления не включаются. Но это НЕ защита от перехвата на пути к разрешённому серверу: для неё нужен HTTPS на обеих платформах.
+ 
+-````powershell
+-.\Build-Desktop.cmd -Action check -GradleHome "C:\Tools\gradle-8.11.1" -FfmpegPath "C:\Tools\ffmpeg\bin\ffmpeg.exe"
+-.\Build-Desktop.cmd -Action run -GradleHome "C:\Tools\gradle-8.11.1" -FfmpegPath "C:\Tools\ffmpeg\bin\ffmpeg.exe"
+-.\Build-Desktop.cmd -Action package -GradleHome "C:\Tools\gradle-8.11.1" -FfmpegPath "C:\Tools\ffmpeg\bin\ffmpeg.exe"
+-````
++После успешного завершения скачать artifact `ZiziDesktop-Windows-x64-0.3.1-preview`, распаковать всю папку и запускать `ZiziDesktop.exe`. FFmpeg и ffprobe по-прежнему внешние: указать FFmpeg в настройках звука. Его настройка теперь не меняет сетевую сессию.
+ 
+-Build-Desktop.ps1 проверяет SHA-256 оригинальных DSP/иконок и запускает тесты перед run/package. При использовании соседнего Audio Lab можно оставить прежний способ поиска Gradle. FFmpeg не включён в дистрибутив. EXE распространяется со всей папкой build/compose/binaries/main/app/ZiziDesktop, а не в одиночку.
++## Что изменилось для слушателя
+ 
+-## Подключение
++В приложении больше нет полей сервера и bootstrap-токена. При наличии корректной конфигурации релиза подключение и подготовка ключа запускаются автоматически. До реального запроса UI пишет «Конфигурация загружена · сеть ещё не проверена», а не притворяется подключённым.
+ 
+-Открой Настройки, введи адрес сервера и токен локально. Не вшивай токен в исходники или desktop.yml и не присылай его в чат. HTTP разрешён только для localhost/loopback-тестов; публичному серверу нужен HTTPS. Если текущая мобильная установка работает через обычный HTTP или нестандартную авторизацию, это отдельная задача настройки сервера, а не повод отправлять ключ открытым текстом.
++Install ID сохраняется как раньше. Новый кэш сохраняет временный device-ключ и срок; он разделён по адресу, install ID и bootstrap. Смена параметров сборки не смешивает старые ключи с новым сервером. Это per-user Java Preferences (HKCU на Windows), **не DPAPI/защищённое хранилище**. Общий bootstrap туда не сохраняется, но остаётся извлекаемым из самого публичного приложения, как у Android.
+ 
+-После «Применить» переключись на Поиск. Это действие сохраняет настройки, но само по себе не подтверждает связь. Отсутствие /auth/device допускает bootstrap fallback как в мобилке; отсутствие /catalog/search, /match/deezer, /resolve или /stream — реальный блокер интеграции. Защищённый сервер здесь не вызывался: проверены локальные фикстуры его контрактов.
++Вместо большого градиента — чёрный матовый фон и нейтральные поверхности. У поиска мобильные высоты 49.5/52 dp, радиус 3.5 dp, цвета и размеры текста. Enter и иконка поиска заменяют клавиатурную кнопку Android. История запросов сохраняется и очищается. Подсказки пока только из истории и локальной медиатеки, не с провайдера.
+ 
+-## Границы версии
++## Обязательная проверка после сборки
+ 
+-Нет постоянной медиатеки/SQLite, сохранения очереди, избранного и плейлистов, загрузок, .zizi-импорта, аккаунтов, OS keychain/DPAPI, регистрации zizi:// в Windows, SMTC/трея, автообновлений, speed/pitch и спектра. Списки и DSP-настройки живут до закрытия. Локальные метаданные кешируются на время сеанса и пока не отслеживают изменения файла на диске. Прослушивание сетевого результата не добавляет его в медиатеку автоматически.
++Проверить холодный старт, поиск, онлайн-воспроизведение, перезапуск, переключение и паузу/seek. Изменить только FFmpeg и убедиться, что авторизацию повторно вводить не требуется. Проверить 401/429/offline без зависания UI и без утечки URL/ключей в сообщениях. На реальном дисплее проверить фон, поиск, диалоги и масштабирование 100/125/150%.
+ 
+-Нет автоматического обхода ошибки трека и бесконечных повторов запросов. При ошибке остаёмся на проблемном треке; следующий запускается только вручную. Для signed URL прямого источника не реализован провайдерный refresh: используй стабильный zizi://. ffprobe может задержать первое открытие; без его успешного ответа seek отключён. Быстрое переключение отменяет устаревшие результаты, но освобождение сетевого запроса всё ещё может ждать HTTP timeout (15 секунд на чтение/подключение); моментальный сетевой cancel не заявляется. Абсолютный deadline на весь медленный HTTP-body, полноценные buffering-состояния и watchdog драйвера остаются задачами стабилизации.
++CI запускает 44 JUnit-метода, включая 9 новых тестов bundled connection/cache/policy и существующие аудиотесты с FFmpeg. Их наличие — не утверждение, что они уже прошли: нужен зелёный CI.
+ 
+-Полная Compose-сборка штатным Kotlin 2.1.0, рендер, Windows-звук, DPI, длинный прогон и живой сервер ещё требуют проверки. Подробные доказательства и ограничения — VALIDATION.md. Не публикуй этот кандидат как проверенный релиз до прохождения этих пунктов.
++## Откат
++
++Сохранить существующую рабочую папку 0.3.0. В GitHub откатить commit с этим обновлением (включая workflow и `desktop/current.json`) и заново собрать предыдущий manifest. Удалять короткоживущие ключи 0.3.1 вручную для отката не требуется. Серверные параметры этот пакет не меняет.
+--- a/REVIEW_0.3.1.md
++++ b/REVIEW_0.3.1.md
+@@ -0,0 +1,49 @@
++# Разбор ZiziPlayer: Desktop 0.3.0 и Android 6.39.9
++
++Дата: 2026-09-08. Источник: публичный репозиторий Eren2932/ZiziPlayer, main, полученный в этой сессии. GitHub Releases API показывает APK v6.39.9 от 2026-09-07. Для анализа использованы последние исходные ZIP из main: `ZiziDesktop-0.3.0-repo-update.zip` → `desktop/releases/ZiziDesktop-0.3.0-preview-source.zip` и `ZiziPlayer-v6.39.9.zip`. Бинарный APK не декомпилирован: доступные исходники дают гораздо больше архитектурной информации. Их тождество содержимому опубликованного APK не подтверждено воспроизводимой сборкой.
++
++## Архитектура и степень общности
++
++Android — Kotlin/Jetpack Compose, MainViewModel/SearchViewModel, Room/репозиторий, Media3, OkHttp и серверные каталоги/resolve. Основные сетевые узлы: `ZiziResolve`, `ZiziInstall`, `ZiziHttp`; сервер — Python/FastAPI и guard/catalog/resolve/stream. Поиск имеет отдельные HUB / RECENT / SUGGEST / RESULTS, страницы коллекций, пагинацию и сохранение музыки.
++
++Desktop — Kotlin/JVM 21, Compose Desktop 1.7.3, один DesktopUi, отдельный DesktopPlayer с поколениями сессии, FFmpeg → PCM → общий DSP → JavaSound. Доступ к каталогу/resolve — HttpURLConnection, аудио передаётся FFmpeg через локальный StreamBridge. Bridge сохраняет Range/HEAD и не передаёт токен в аргументы процесса. Медиатека и очередь десктопа пока не равны Android Room: список добавленных файлов живёт в сессии.
++
++Оригинальные `Biquad`, `DspConfig`, `DspEngine`, `DspPresets` и `ZiziIcons` уже были перенесены в 0.3.0 побайтно. Их хеши сохранены и проверены. То есть проблема внешнего вида не в отсутствии мобильных иконок, а в компоновке, стандартных контролах и теме. В 0.3.1 добавлена побайтная копия платформонезависимой `SearchPresentation` с проверкой хеша.
++
++Это пока синхронизация контрактов и отдельных общих файлов, не единый Kotlin Multiplatform-модуль. Следующий архитектурный шаг — общий модуль моделей/auth policy/search presentation/design tokens с платформенными adapters для хранения, HTTP и воспроизведения. Нельзя считать две изменяемые копии «единой логикой» навсегда.
++
++## Почему подключение 0.3.0 могло не работать
++
++`network/ZiziClient.kt`, `HttpTransport.safeUri` разрешает HTTPS и HTTP loopback, но не внешний HTTP. Android `ZiziResolve.base()` добавляет HTTP к адресу без схемы. Это подтверждённое отличие кода, но скриншот сам по себе не содержит сообщения об ошибке, поэтому единственная фактическая причина сбоя на компьютере пользователя не установлена.
++
++В `DesktopMain.kt` у 0.3.0 `client` изначально null. Серверный адрес читается из Preferences, но клиент создаётся только в `connect()` при применении настроек. Bootstrap не сохраняется, а применение диалога всегда заменяет клиента, даже если меняли только путь FFmpeg. Отсюда неудобный обязательный ручной ввод и потеря настроенной авторизации.
++
++0.3.1 получает endpoint/bootstrap из ресурса, формируемого Gradle из тех же GitHub inputs, что использует Android. Сеть прогревается на IO, а не в Compose. На холодном запросе обмен ключа выполняется синхронно внутри IO, что намеренно отличается от Android фонового fallback: сервер в `require` может отвергнуть bootstrap до окончания асинхронного обмена. При 401 по сохранённому device-ключу добавлена одна ограниченная попытка обновления и повтора JSON-запроса. Range/HEAD/redirect policy сохранены.
++
++## Что реально защищает сервер
++
++В `server/zizi_guard.py` `_device_key()` использует независимый `ZIZI_DEVICE_KEY`, **только если он задан**. Иначе ключ подписи детерминированно выводится из `ZIZI_CATALOG_TOKEN` либо `ZIZI_TOKEN`. Если этот bootstrap известен из публичного клиента, предположение «секрет подписи отсутствует в приложении и не восстанавливается из него» в fallback-конфигурации неверно. Это вывод из реализации, не проверка действующего VPS.
++
++Кроме того, `device_mode()` по умолчанию возвращает `warn`: это совместимость со старыми APK, а не строгий запрет общего bearer. В режиме `require` сервер умеет принимать bootstrap только для `/auth/device`, защищать рабочие маршруты device-ключом, учитывать подписанный ID и отзывать установку. Ограниченная квота выдачи остаётся важна: новый UUID сам по себе не является доказательством уникального устройства.
++
++Для укрепления нужно на стороне VPS задать независимый случайный `ZIZI_DEVICE_KEY`, сохраняемый только в серверном окружении; защитить API HTTPS; проверить выдачу/обновление/401 на обеих платформах и лишь затем планировать `ZIZI_DEVICE_MODE=require`. Подпись/ключ и реальные env в отчёт не включены; действующие параметры не считаны и не изменены. Переход на независимый ключ делает старые device-токены недействительными, поэтому требует контролируемого окна и проверки восстановления Android.
++
++У Android 6.39.9 `ZiziInstall.bearer()` возвращает bootstrap и обновляет device-ключ в фоне, когда ключ ещё не получен либо уже подходит к порогу обновления. Это потенциальное окно 401 в строгом режиме. Нельзя просто включить `require` и объявить обе платформы проверенными без тестирования этого сценария. Пакет desktop не меняет сервер и APK.
++
++Скрытое поле не является защитой ключа. Даже secret из GitHub Actions станет извлекаемым bootstrap внутри опубликованного бинарника. Именно сервер должен ограничивать его полномочия; серверный ключ подписи туда попадать не должен. HTTP даже с origin-проверкой оставляет bearer и трафик доступными для перехвата на пути.
++
++## Дизайн и анимации
++
++Android `ZiziTheme.kt` разделяет нейтральную AMOLED-базу и цветной режим обложки, использует Oklab/Oklch и ArtworkColorMath; `BackdropBlend` владеет переходом, а `PlayerTransitionPolicy` согласует его с треком и жестом. Это существенно сложнее среднего RGB обложки, наложенного на двухцветный вертикальный градиент Desktop 0.3.0.
++
++Большой тёмный градиент может давать banding из-за квантования небольшого диапазона оттенков на большой площади. Снимок экрана и код не позволяют исключить вклад дисплея/гаммы/вывода. В 0.3.1 градиент удалён: сплошной #000000, поверхности #101010, chips #1B1B1B, основной текст #F6F7F8, вторичный #9A9A9A, бренд #F97316. Убрана ненужная усреднённая RGB-палитра и стандартный surface tint диалогов. Для матового режима нечему образовывать ступени градиента; это не обещание устранить аппаратные особенности экрана.
++
++Поле поиска адаптировано по `SearchScreen.kt`: 49.5/52 dp, угол 3.5 dp, белый idle и #292929 при вводе, текст 17 sp. Перенесена логика вращения Refresh: 900 ms линейно, затем 340 ms до полного оборота с FastOutSlowInEasing. Есть история запросов и подсказки истории/локальных названий, но не выдача provider suggestions. Показ/скрытие DSP-панели анимированы; это desktop-адаптация, не перенос всей мобильной системы жестов.
++
++Полный мобильный хаб с жанрами, реальными полками, коллекциями и пагинацией; now-playing overlay/миниплеер и жестовые переходы; арт-палитра и её handoff; постоянная медиатека/сохранение коллекций пока НЕ перенесены. Визуальный паритет 1:1 не достигнут и в этом пакете не заявляется. Typography использует платформенные шрифтовые defaults, поэтому идентичность метрик также не подтверждена.
++
++## Проверки и ограничения
++
++Выполнены: 21 статический контракт с проверкой шести upstream-хешей; 9 Python-тестов preflight; проверка строк/скобок/Kotlin-комментариев (не компиляция); 46 утверждений оригинального серверного `test_zizi_device.py` на локальных fixtures. Последние подтверждают контракт исходников, не защищённость текущего VPS. ZIP manifest/hash/extraction дополнительно проверены при упаковке.
++
++Добавлены 9 JUnit-методов проверки bundled config, scoped HTTP, кэша и восстановления 401. Всего в исходниках 44 JUnit-метода вместе с существующими аудиотестами. Kotlin/Gradle/JUnit/Windows app-image в этой сессии НЕ запускались. Нет проверки живого сервера, прослушивания, screenshots новой сборки или визуального теста. GitHub Actions должен выполнить сборку и все JUnit/audio-тесты перед использованием.
+--- a/VALIDATION.md
++++ b/VALIDATION.md
+@@ -1,25 +1,13 @@
+-# Validation — Desktop 0.3.0-preview
++# Validation 0.3.1-preview
+ 
+-Дата: 2026-09-08. База репозитория: Eren2932/ZiziPlayer, снимок 51d864e. Desktop base SHA-256: 85e8622c8a03e2e5182192e6fc97ede990ae03d14b1690937074d038f8d959dc.
++Prepared source update; NOT a verified Windows binary.
+ 
+-## Выполнено
++Executed in this session:
++- 21 static source contracts, including six upstream hashes: PASS.
++- 9 Python CI configuration tests: PASS.
++- Kotlin delimiter/string/comment scan: no issues (NOT compilation).
++- Original Android source server device-contract fixture suite: 46 assertions PASS.
+ 
+-Ядро (desktop/*.kt, desktop/network/*.kt, оригинальный playback/dsp и тесты, БЕЗ Compose UI) скомпилировано и выполнено в Linux на OpenJDK 21. Использовался вспомогательный kotlin-compiler-embeddable 1.6.21, JVM target 11, stdlib/reflect/jdk7 1.6.21, coroutines-core-jvm 1.6.4, JSON-java 20240303, JUnit 4.13.2, Hamcrest 1.3. Это отдельная проверочная связка, НЕ штатная сборка продукта. В build.gradle.kts остались Kotlin 2.1.0, coroutines-swing 1.9.0, Compose 1.7.3, JVM toolchain 21.
++Not executed: Gradle compilation, 44 JUnit methods (including 9 new), FFmpeg/JVM integration, Windows packaging, visual/audio checks, live resolver connectivity. No executable is supplied or claimed built.
+ 
+-Причина дополнительной связки: полноценного Gradle/Compose toolchain в среде нет; загрузчик ограничен 50 MB на файл, архив Kotlin 2.1.0 превышает лимит. Применение более старого компилятора ловит реальные ошибки ядра и позволяет запускать тесты, но не доказывает компиляцию и runtime-совместимость всего UI на штатных зависимостях. Зависимости проверки не входят в source ZIP.
+-
+-Итог: **35 JUnit-тестов прошли**, включая все прежние 19 AudioLabTest и 16 новых DesktopTransportTest. Последние дополнительно прошли 10 последовательных прогонов (160 повторных выполнений). FFmpeg/ffprobe: 6.1.1-3ubuntu5. UTF-8 locale: C.UTF-8. Первый запуск Unicode-теста на системной C locale не прошёл ещё при создании имени файла; повтор с корректной UTF-8 locale прошёл без изменения теста.
+-
+-Покрыты PCM-фрагментация, хвост, квантование, DSP, локальные FLAC/Unicode и HTTP-аудио, EOF/error базового движка; pause/resume без нового декодера; seek с сохранением паузы; быстрые переключения и generation; stop против позднего прогресса; отключение seek без известной длительности; pause до старта; мобильные ID; HTTPS-policy; формат/позиция аргумента -ss; выдача device token; Deezer search/match/resolve; fallback/backoff и HTTP 429; Range, HEAD, запрет редиректа и плейлиста; отсутствие upstream URL/Authorization в FFmpeg argv.
+-
+-Отдельные интеграционные тесты использовали настоящий FFmpeg: из WAV длиной 2 секунды после seek на 1.25 секунды получено 36 000 кадров при 48 kHz, то есть 0.75 секунды. Такой же результат получен через авторизованный локальный StreamBridge с Range; ffprobe через мост прочитал длительность 2000 ms. Локальный HTTP-сервер — тестовая фикстура, не сервер пользователя.
+-
+-JavaSoundSink отдельно проверен с proxy-реализацией SourceDataLine: pause вызывает stop без flush, resume — start, submitted bytes не подменяют device clock, сброс счётчика драйвера не отматывает опубликованную позицию назад. Контроллерные сценарии используют FakeSink, а не настоящее звуковое устройство. Слышимость и поведение реального Windows-драйвера НЕ подтверждены.
+-
+-Эвристическая проверка синтаксиса мобильным tools/check_kotlin_syntax.py: files with issues: 0. Она не заменяет компиляцию Compose. Оригинальные четыре DSP-файла и ZiziIcons.kt сверены с upstream.json. Android ZIP и действующий Android build.yml не изменялись.
+-
+-## Не выполнено — обязательная приёмка
+-
+-Полная Gradle-сборка test/createDistributable на Kotlin 2.1.0; компиляция Compose UI; Windows app-image; отрисовка интерфейса и соответствие скриншотам; реальный звук/pause/seek/конец трека на Windows; DPI 100/125/150/200%; клавиатура и фокус в готовом приложении; 30–60 минут воспроизведения и resize; недоступное/исчезнувшее устройство; настоящий сервер, его TLS, квоты и auth; истечение/отзыв ключа; поиск/сопоставление на реальных треках; длительные сетевые прерывания.
+-
+-Не считать зелёный вспомогательный JUnit-прогон доказательством готовности EXE. Штатный Build-Desktop.ps1 запускает эти тесты после компиляции всего приложения и останавливается на любой ошибке перед упаковкой.
++CI performs source contracts then JUnit/audio tests and createDistributable. A green CI and real Windows smoke test are required. Historical validation documents apply to old source snapshots only, not to this update.
+--- a/build.gradle.kts
++++ b/build.gradle.kts
+@@ -1,10 +1,12 @@
++import java.util.Properties
++
+ plugins {
+     kotlin("jvm") version "2.1.0"
+     id("org.jetbrains.kotlin.plugin.compose") version "2.1.0"
+     id("org.jetbrains.compose") version "1.7.3"
+ }
+ group = "app.ziziplayer.desktop"
+-version = "0.3.0"
++version = "0.3.1"
+ kotlin { jvmToolchain(21) }
+ dependencies {
+     implementation(compose.desktop.currentOs)
+@@ -24,8 +26,30 @@
+         mainClass = "app.ziziplayer.desktop.ui.DesktopMainKt"
+         nativeDistributions {
+             packageName = "ZiziDesktop"
+-            packageVersion = "0.3.0"
++            packageVersion = "0.3.1"
+             includeAllModules = true
+         }
+     }
+ }
++
++// Build inputs match Android. Never pass bootstrap in command-line arguments or print it.
++// A packaged public client cannot keep this bootstrap secret from its owner.
++val connectionResources = layout.buildDirectory.dir("generated/connectionResources")
++val generateConnectionResources by tasks.registering {
++    val resolverUrl = providers.environmentVariable("RESOLVER_URL").orElse("")
++    val resolverToken = providers.environmentVariable("RESOLVER_TOKEN").orElse("")
++    val allowHttp = providers.environmentVariable("DESKTOP_ALLOW_HTTP").orElse("false")
++    outputs.dir(connectionResources)
++    outputs.upToDateWhen { false }
++    doLast {
++        val output = connectionResources.get().file("zizi-connection.properties").asFile
++        output.parentFile.mkdirs()
++        val values = Properties()
++        values.setProperty("resolver.url", resolverUrl.get().trim())
++        values.setProperty("resolver.bootstrap", resolverToken.get().trim())
++        values.setProperty("resolver.allowHttp", allowHttp.get())
++        output.outputStream().use { values.store(it, "Zizi build configuration; do not log") }
++    }
++}
++sourceSets { main { resources.srcDir(connectionResources) } }
++tasks.named("processResources") { dependsOn(generateConnectionResources) }
+--- a/docs/legacy/VALIDATION_0.3.0.md
++++ b/docs/legacy/VALIDATION_0.3.0.md
+@@ -0,0 +1,25 @@
++# Validation — Desktop 0.3.0-preview
++
++Дата: 2026-09-08. База репозитория: Eren2932/ZiziPlayer, снимок 51d864e. Desktop base SHA-256: 85e8622c8a03e2e5182192e6fc97ede990ae03d14b1690937074d038f8d959dc.
++
++## Выполнено
++
++Ядро (desktop/*.kt, desktop/network/*.kt, оригинальный playback/dsp и тесты, БЕЗ Compose UI) скомпилировано и выполнено в Linux на OpenJDK 21. Использовался вспомогательный kotlin-compiler-embeddable 1.6.21, JVM target 11, stdlib/reflect/jdk7 1.6.21, coroutines-core-jvm 1.6.4, JSON-java 20240303, JUnit 4.13.2, Hamcrest 1.3. Это отдельная проверочная связка, НЕ штатная сборка продукта. В build.gradle.kts остались Kotlin 2.1.0, coroutines-swing 1.9.0, Compose 1.7.3, JVM toolchain 21.
++
++Причина дополнительной связки: полноценного Gradle/Compose toolchain в среде нет; загрузчик ограничен 50 MB на файл, архив Kotlin 2.1.0 превышает лимит. Применение более старого компилятора ловит реальные ошибки ядра и позволяет запускать тесты, но не доказывает компиляцию и runtime-совместимость всего UI на штатных зависимостях. Зависимости проверки не входят в source ZIP.
++
++Итог: **35 JUnit-тестов прошли**, включая все прежние 19 AudioLabTest и 16 новых DesktopTransportTest. Последние дополнительно прошли 10 последовательных прогонов (160 повторных выполнений). FFmpeg/ffprobe: 6.1.1-3ubuntu5. UTF-8 locale: C.UTF-8. Первый запуск Unicode-теста на системной C locale не прошёл ещё при создании имени файла; повтор с корректной UTF-8 locale прошёл без изменения теста.
++
++Покрыты PCM-фрагментация, хвост, квантование, DSP, локальные FLAC/Unicode и HTTP-аудио, EOF/error базового движка; pause/resume без нового декодера; seek с сохранением паузы; быстрые переключения и generation; stop против позднего прогресса; отключение seek без известной длительности; pause до старта; мобильные ID; HTTPS-policy; формат/позиция аргумента -ss; выдача device token; Deezer search/match/resolve; fallback/backoff и HTTP 429; Range, HEAD, запрет редиректа и плейлиста; отсутствие upstream URL/Authorization в FFmpeg argv.
++
++Отдельные интеграционные тесты использовали настоящий FFmpeg: из WAV длиной 2 секунды после seek на 1.25 секунды получено 36 000 кадров при 48 kHz, то есть 0.75 секунды. Такой же результат получен через авторизованный локальный StreamBridge с Range; ffprobe через мост прочитал длительность 2000 ms. Локальный HTTP-сервер — тестовая фикстура, не сервер пользователя.
++
++JavaSoundSink отдельно проверен с proxy-реализацией SourceDataLine: pause вызывает stop без flush, resume — start, submitted bytes не подменяют device clock, сброс счётчика драйвера не отматывает опубликованную позицию назад. Контроллерные сценарии используют FakeSink, а не настоящее звуковое устройство. Слышимость и поведение реального Windows-драйвера НЕ подтверждены.
++
++Эвристическая проверка синтаксиса мобильным tools/check_kotlin_syntax.py: files with issues: 0. Она не заменяет компиляцию Compose. Оригинальные четыре DSP-файла и ZiziIcons.kt сверены с upstream.json. Android ZIP и действующий Android build.yml не изменялись.
++
++## Не выполнено — обязательная приёмка
++
++Полная Gradle-сборка test/createDistributable на Kotlin 2.1.0; компиляция Compose UI; Windows app-image; отрисовка интерфейса и соответствие скриншотам; реальный звук/pause/seek/конец трека на Windows; DPI 100/125/150/200%; клавиатура и фокус в готовом приложении; 30–60 минут воспроизведения и resize; недоступное/исчезнувшее устройство; настоящий сервер, его TLS, квоты и auth; истечение/отзыв ключа; поиск/сопоставление на реальных треках; длительные сетевые прерывания.
++
++Не считать зелёный вспомогательный JUnit-прогон доказательством готовности EXE. Штатный Build-Desktop.ps1 запускает эти тесты после компиляции всего приложения и останавливается на любой ошибке перед упаковкой.
+--- a/src/main/kotlin/app/ziziplayer/desktop/DesktopPlayer.kt
++++ b/src/main/kotlin/app/ziziplayer/desktop/DesktopPlayer.kt
+@@ -212,6 +212,19 @@
+ object DesktopPreferences {
+     private val prefs = Preferences.userRoot().node("app/ziziplayer/desktop")
+     val installId: String = prefs.get("installId", "").ifBlank { UUID.randomUUID().toString().also { prefs.put("installId", it) } }
+-    var server: String get() = prefs.get("server", ""); set(value) { prefs.put("server", value) }
++    // Legacy manual server preference is no longer consumed. Never migrate a user-edited
++    // origin into the build configuration, otherwise bootstrap could reach the wrong host.
++    var recentSearches: List<String>
++        get() = runCatching {
++            val data = org.json.JSONArray(prefs.get("recentSearches", "[]"))
++            (0 until minOf(data.length(), 20)).map { data.getString(it).take(300) }
++        }.getOrDefault(emptyList())
++        set(value) {
++            runCatching {
++                val entries = value.take(20).map { it.take(300) }.toMutableList()
++                while (org.json.JSONArray(entries).toString().length > 7000) entries.removeAt(entries.lastIndex)
++                prefs.put("recentSearches", org.json.JSONArray(entries).toString())
++            }
++        }
+     var ffmpeg: String get() = prefs.get("ffmpeg", ""); set(value) { prefs.put("ffmpeg", value) }
+ }
+--- a/src/main/kotlin/app/ziziplayer/desktop/network/BundledConnection.kt
++++ b/src/main/kotlin/app/ziziplayer/desktop/network/BundledConnection.kt
+@@ -0,0 +1,37 @@
++package app.ziziplayer.desktop.network
++
++import java.net.URI
++import java.util.Properties
++
++/** Same RESOLVER_URL / RESOLVER_TOKEN inputs as Android. Not an unextractable secret. */
++class BundledConnection private constructor(
++    private val base: String,
++    private val bootstrap: String,
++    private val legacyOrigin: URI?
++) {
++    val usesHttp: Boolean get() = URI(base).scheme == "http"
++    fun client(installId: String): ZiziClient = ZiziClient(base, bootstrap, installId, legacyOrigin,
++        PreferencesDeviceTokenStore(base, installId, bootstrap))
++    companion object {
++        fun load(): BundledConnection? {
++            val properties = Properties()
++            BundledConnection::class.java.getResourceAsStream("/zizi-connection.properties")?.use {
++                properties.load(it)
++            } ?: return null
++            return from(properties)
++        }
++        internal fun from(properties: Properties): BundledConnection? {
++            val raw = properties.getProperty("resolver.url", "").trim().trimEnd('/')
++            if (raw.isBlank()) return null
++            // Android normalizes a schemeless address to HTTP. External HTTP still needs a
++            // deliberate build-time compatibility opt-in, scoped to this origin only.
++            val uri = URI(if (raw.contains("://")) raw else "http://$raw")
++            val legacy = uri.takeIf { it.scheme == "http" && properties.getProperty("resolver.allowHttp") == "true" }
++            HttpTransport.safeUri(uri.toString(), legacy)
++            require(uri.rawQuery == null)
++            val token = properties.getProperty("resolver.bootstrap", "").trim()
++            require(token.isNotBlank() && token.length <= 4096 && token.all { it.code in 32..126 })
++            return BundledConnection(uri.toString(), token, legacy)
++        }
++    }
++}
+--- a/src/main/kotlin/app/ziziplayer/desktop/network/DeviceTokenStore.kt
++++ b/src/main/kotlin/app/ziziplayer/desktop/network/DeviceTokenStore.kt
+@@ -0,0 +1,44 @@
++package app.ziziplayer.desktop.network
++
++import java.nio.charset.StandardCharsets
++import java.security.MessageDigest
++import java.util.prefs.Preferences
++
++// Deliberately not a data class: generated toString must not expose a bearer credential.
++class DeviceCredential(val token: String, val expiresAt: Long, val renewAt: Long)
++interface DeviceTokenStore {
++    fun load(): DeviceCredential?
++    fun save(value: DeviceCredential)
++    fun clear()
++}
++class MemoryDeviceTokenStore : DeviceTokenStore {
++    private var value: DeviceCredential? = null
++    override fun load() = value
++    override fun save(value: DeviceCredential) { this.value = value }
++    override fun clear() { value = null }
++}
++/** Per-user Preferences, equivalent in scope to Android's private preferences, NOT a vault.
++ * Windows stores these in HKCU. A process running as this user can read them.
++ * Only short-lived device credentials are saved; no bootstrap/server secret is written here.
++ */
++class PreferencesDeviceTokenStore(base: String, installId: String, bootstrap: String) : DeviceTokenStore {
++    private val key = MessageDigest.getInstance("SHA-256")
++        .digest((base + "\n" + installId + "\n" + bootstrap).toByteArray(StandardCharsets.UTF_8))
++        .joinToString("") { "%02x".format(it) }
++    private val prefs = Preferences.userRoot().node("app/ziziplayer/desktop/device/$key")
++    override fun load(): DeviceCredential? = runCatching {
++        val token = prefs.get("token", "")
++        val expires = prefs.getLong("expires", 0)
++        val renew = prefs.getLong("renew", 0)
++        if (token.isBlank() || token.length > 4096 || token.any { it.code < 32 || it.code > 126 } ||
++            expires <= System.currentTimeMillis() || renew !in 1..expires) null
++        else DeviceCredential(token, expires, renew)
++    }.getOrNull()
++    override fun save(value: DeviceCredential) {
++        runCatching {
++            prefs.put("token", value.token); prefs.putLong("expires", value.expiresAt)
++            prefs.putLong("renew", value.renewAt); prefs.flush()
++        }
++    }
++    override fun clear() { runCatching { prefs.clear(); prefs.flush() } }
++}
+--- a/src/main/kotlin/app/ziziplayer/desktop/network/StreamBridge.kt
++++ b/src/main/kotlin/app/ziziplayer/desktop/network/StreamBridge.kt
+@@ -21,7 +21,7 @@
+     @Volatile private var closed = false
+     val input: String get() = "http://127.0.0.1:${server.address.port}$path"
+     init {
+-        HttpTransport.safeUri(target.uri.toString())
++        HttpTransport.safeUri(target.uri.toString(), target.legacyOrigin)
+         server.executor = executor
+         server.createContext("/") { exchange -> serve(exchange) }
+         server.start()
+@@ -38,7 +38,7 @@
+                 if (!it.matches(Regex("bytes=(?:[0-9]+-[0-9]*|-[0-9]+)"))) { e.sendResponseHeaders(400, -1); return }
+                 headers["Range"] = it
+             }
+-            c = HttpTransport.open(target.uri, headers, e.requestMethod)
++            c = HttpTransport.open(target.uri, headers, e.requestMethod, target.legacyOrigin)
+             connections.add(c)
+             if (closed) return
+             val code = c.responseCode
+--- a/src/main/kotlin/app/ziziplayer/desktop/network/ZiziClient.kt
++++ b/src/main/kotlin/app/ziziplayer/desktop/network/ZiziClient.kt
+@@ -25,22 +25,29 @@
+     }
+ }
+ object HttpTransport {
+-    fun safeUri(raw: String): URI {
++    fun sameOrigin(a: URI, b: URI): Boolean {
++        fun port(u: URI) = if (u.port >= 0) u.port else if (u.scheme == "https") 443 else 80
++        return a.scheme.equals(b.scheme, true) && a.host.equals(b.host, true) && port(a) == port(b)
++    }
++    fun safeUri(raw: String, legacyOrigin: URI? = null): URI {
+         val uri = URI(raw)
+         require(uri.userInfo == null && uri.fragment == null && !uri.host.isNullOrBlank())
+-        require(uri.scheme == "https" || (uri.scheme == "http" && uri.host in setOf("127.0.0.1", "localhost", "[::1]"))) {
++        require(uri.port in -1..65535 && uri.port != 0)
++        require(uri.scheme == "https" || (uri.scheme == "http" &&
++            (uri.host in setOf("127.0.0.1", "localhost", "[::1]") ||
++                (legacyOrigin != null && sameOrigin(uri, legacyOrigin))))) {
+             "HTTPS_REQUIRED"
+         }
+         return uri
+     }
+-    fun open(uri: URI, headers: Map<String, String> = emptyMap(), method: String = "GET"): HttpURLConnection {
+-        safeUri(uri.toString())
++    fun open(uri: URI, headers: Map<String, String> = emptyMap(), method: String = "GET", legacyOrigin: URI? = null): HttpURLConnection {
++        safeUri(uri.toString(), legacyOrigin)
+         val connection = uri.toURL().openConnection() as HttpURLConnection
+         connection.instanceFollowRedirects = false // Never forward auth to another origin.
+         connection.connectTimeout = 15_000
+         connection.readTimeout = 15_000
+         connection.requestMethod = method
+-        connection.setRequestProperty("User-Agent", "ZiziDesktop/0.3.0")
++        connection.setRequestProperty("User-Agent", "ZiziDesktop/0.3.1")
+         connection.setRequestProperty("Accept-Encoding", "identity")
+         for ((key, value) in headers) {
+             require(!key.contains('\r') && !key.contains('\n') && !value.contains('\r') && !value.contains('\n'))
+@@ -48,8 +55,8 @@
+         }
+         return connection
+     }
+-    fun bytes(uri: URI, headers: Map<String, String>, max: Int): ByteArray {
+-        val c = open(uri, headers)
++    fun bytes(uri: URI, headers: Map<String, String>, max: Int, legacyOrigin: URI? = null): ByteArray {
++        val c = open(uri, headers, legacyOrigin = legacyOrigin)
+         try {
+             val code = c.responseCode
+             if (code != 200) throw NetworkFailure(code)
+@@ -60,38 +67,56 @@
+         } finally { c.disconnect() }
+     }
+ }
+-/** Settings snapshot: replace the entire client when the origin or bootstrap changes.
+- * No token is persisted, included in toString, URLs, FFmpeg arguments or exception messages.
++/** Immutable build-configured origin. Headers/refresh perform IO: never call on the UI thread.
++ * Only the expiring device credential is cached; bootstrap is supplied by the build.
++ * Neither credential enters URLs, FFmpeg arguments, diagnostics or toString.
+  */
+-class ZiziClient(base: String, private val bootstrap: String, private val installId: String = UUID.randomUUID().toString()) {
+-    private val base = HttpTransport.safeUri(base.trim().trimEnd('/')).also {
++class ZiziClient(base: String, private val bootstrap: String,
++    private val installId: String = UUID.randomUUID().toString(),
++    private val legacyOrigin: URI? = null,
++    private val tokenStore: DeviceTokenStore = MemoryDeviceTokenStore()
++) {
++    private val base = HttpTransport.safeUri(base.trim().trimEnd('/'), legacyOrigin).also {
+         require(it.query == null)
+     }.toString().trimEnd('/')
+-    private var deviceToken = ""
+-    private var expiresAt = 0L
+-    private var renewAt = 0L
++    private val cached = tokenStore.load()
++    private var deviceToken = cached?.token.orEmpty()
++    private var expiresAt = cached?.expiresAt ?: 0L
++    private var renewAt = cached?.renewAt ?: 0L
+     private var retryAt = 0L
+     private fun endpoint(path: String, parameters: Map<String, String> = emptyMap()): URI {
+         val query = parameters.entries.joinToString("&") { (k, v) -> "$k=${URLEncoder.encode(v, StandardCharsets.UTF_8)}" }
+         return URI(base + path + if (query.isEmpty()) "" else "?$query")
+     }
+-    private fun json(path: String, parameters: Map<String, String> = emptyMap()): JSONObject =
+-        JSONObject(String(HttpTransport.bytes(endpoint(path, parameters), headers(), 2 * 1024 * 1024), StandardCharsets.UTF_8))
++    private fun json(path: String, parameters: Map<String, String> = emptyMap()): JSONObject {
++        fun request() = JSONObject(String(HttpTransport.bytes(endpoint(path, parameters), headers(),
++            2 * 1024 * 1024, legacyOrigin), StandardCharsets.UTF_8))
++        try { return request() } catch (e: NetworkFailure) {
++            if (e.code != 401) throw e
++            // One recovery attempt for a cached/revoked device credential. Preserve failure backoff.
++            synchronized(this) {
++                if (deviceToken.isBlank()) throw e
++                deviceToken = ""; expiresAt = 0; renewAt = 0; tokenStore.clear()
++            }
++            return request()
++        }
++    }
+     @Synchronized fun headers(): Map<String, String> {
+         val now = System.currentTimeMillis()
+         if (bootstrap.isNotBlank() && now >= renewAt && now >= retryAt) {
+             retryAt = now + 300_000 // No refresh storms on 401/429/503.
+             try {
+                 val auth = mapOf("Authorization" to "Bearer ${bootstrap.trim()}", "X-Zizi-Install" to installId)
+-                val response = JSONObject(String(HttpTransport.bytes(endpoint("/auth/device"), auth, 64 * 1024), StandardCharsets.UTF_8))
++                val response = JSONObject(String(HttpTransport.bytes(endpoint("/auth/device"), auth, 64 * 1024, legacyOrigin), StandardCharsets.UTF_8))
+                 val token = response.getString("token")
+                 val ttl = response.getLong("expires_in")
+-                require(token.isNotBlank() && ttl in 1..604800)
++                require(token.isNotBlank() && token.length <= 4096 && token.none { it.code < 32 || it.code > 126 } && ttl in 1..604800)
+                 deviceToken = token; expiresAt = System.currentTimeMillis() + ttl * 1000
+                 renewAt = expiresAt - minOf(600_000L, ttl * 500); retryAt = 0
++                tokenStore.save(DeviceCredential(deviceToken, expiresAt, renewAt))
+             } catch (_: Exception) { /* Compatible bootstrap fallback, as on mobile. */ }
+         }
+-        val bearer = if (deviceToken.isNotBlank() && now < expiresAt) deviceToken else bootstrap.trim()
++        val bearer = if (deviceToken.isNotBlank() && System.currentTimeMillis() < expiresAt) deviceToken else bootstrap.trim()
+         return buildMap {
+             put("X-Zizi-Install", installId)
+             if (bearer.isNotBlank()) put("Authorization", "Bearer $bearer")
+@@ -117,11 +142,11 @@
+         val resolved = json("/resolve", mapOf("id" to video))
+         require(resolved.optString("url").isNotBlank()) { "RESOLVER_EMPTY" }
+         // Server proxy mode preserves the server IP that resolved the YouTube stream.
+-        return StreamTarget(endpoint("/stream", mapOf("id" to video)), ::headers)
++        return StreamTarget(endpoint("/stream", mapOf("id" to video)), legacyOrigin, ::headers)
+     }
+     fun artwork(raw: String): ByteArray {
+         // Use the mobile server image route and its host policy, not arbitrary authenticated URLs.
+-        return HttpTransport.bytes(endpoint("/img", mapOf("u" to raw)), headers(), 5 * 1024 * 1024)
++        return HttpTransport.bytes(endpoint("/img", mapOf("u" to raw)), headers(), 5 * 1024 * 1024, legacyOrigin)
+     }
+ }
+-class StreamTarget(val uri: URI, val headers: () -> Map<String, String>)
++class StreamTarget(val uri: URI, val legacyOrigin: URI? = null, val headers: () -> Map<String, String>)
+--- a/src/main/kotlin/app/ziziplayer/desktop/ui/DesktopMain.kt
++++ b/src/main/kotlin/app/ziziplayer/desktop/ui/DesktopMain.kt
+@@ -1,5 +1,20 @@
+ package app.ziziplayer.desktop.ui
+ 
++import androidx.compose.animation.AnimatedVisibility
++import androidx.compose.animation.core.Animatable
++import androidx.compose.animation.core.FastOutSlowInEasing
++import androidx.compose.animation.core.LinearEasing
++import androidx.compose.animation.core.tween
++import androidx.compose.animation.fadeIn
++import androidx.compose.animation.fadeOut
++import androidx.compose.animation.expandHorizontally
++import androidx.compose.animation.shrinkHorizontally
++import androidx.compose.foundation.text.BasicTextField
++import androidx.compose.ui.graphics.SolidColor
++import androidx.compose.ui.graphics.graphicsLayer
++import androidx.compose.ui.platform.LocalFocusManager
++import androidx.compose.ui.text.TextStyle
++import androidx.compose.ui.unit.sp
+ import androidx.compose.foundation.Image
+ import androidx.compose.foundation.background
+ import androidx.compose.foundation.clickable
+@@ -16,13 +31,11 @@
+ import androidx.compose.ui.draw.clip
+ import androidx.compose.ui.focus.onFocusChanged
+ import androidx.compose.ui.graphics.Color
+-import androidx.compose.ui.graphics.Brush
+ import androidx.compose.ui.graphics.ImageBitmap
+ import androidx.compose.ui.graphics.toComposeImageBitmap
+ import androidx.compose.ui.input.key.*
+ import androidx.compose.ui.layout.ContentScale
+ import androidx.compose.ui.text.font.FontWeight
+-import androidx.compose.ui.text.input.PasswordVisualTransformation
+ import androidx.compose.ui.text.style.TextOverflow
+ import androidx.compose.ui.unit.Dp
+ import androidx.compose.ui.unit.dp
+@@ -41,8 +54,10 @@
+ import kotlinx.coroutines.*
+ 
+ private val Brand = Color(0xFFF97316)
+-private val Base = Color(0xFF090909)
+-private val Panel = Color(0xFF171717)
++private val Base = Color.Black
++private val Panel = Color(0xFF101010)
++private val Chip = Color(0xFF1B1B1B)
++private val Ink = Color(0xFFF6F7F8)
+ private val Muted = Color(0xFF9A9A9A)
+ 
+ private class DesktopUi(val scope: CoroutineScope) {
+@@ -54,10 +69,32 @@
+     var config by mutableStateOf(DspConfig.NEUTRAL); private set
+     var gain by mutableStateOf(0.35f); private set
+     var client by mutableStateOf<ZiziClient?>(null); private set
+-    var server by mutableStateOf(DesktopPreferences.server)
++    var connectionMessage by mutableStateOf("Подключение не настроено в сборке"); private set
++    var httpCompatibility by mutableStateOf(false); private set
++    var recentSearches by mutableStateOf(DesktopPreferences.recentSearches); private set
+     var ffmpeg by mutableStateOf(DesktopPreferences.ffmpeg.ifBlank { player.ffmpeg })
+     private var searchJob: Job? = null
+-    init { player.ffmpeg = ffmpeg }
++    init {
++        player.ffmpeg = ffmpeg
++        try {
++            val connection = BundledConnection.load()
++            if (connection != null) {
++                val api = connection.client(DesktopPreferences.installId)
++                client = api; player.client = api; httpCompatibility = connection.usesHttp
++                connectionMessage = "Конфигурация загружена · сеть ещё не проверена"
++                // Warm the device exchange away from Compose. A cold request also waits only on IO.
++                scope.launch { withContext(Dispatchers.IO) { api.headers() } }
++            }
++        } catch (_: Exception) {
++            connectionMessage = "Ошибка конфигурации сборки · проверь параметры CI"
++        }
++    }
++    fun audioSettings(executable: String) {
++        ffmpeg = executable.trim().removeSurrounding("\"")
++        player.ffmpeg = ffmpeg; DesktopPreferences.ffmpeg = ffmpeg
++    }
++    fun clearHistory() { recentSearches = emptyList(); DesktopPreferences.recentSearches = emptyList() }
++    fun cancelSearch() { searchJob?.cancel(); searching = false; results = emptyList() }
+     fun add(files: List<File>) { tracks = (tracks + files.map { PlayerTrack(it.absolutePath, it.nameWithoutExtension) }).distinctBy { it.id } }
+     fun addSource(raw: String) {
+         val source = raw.trim()
+@@ -67,28 +104,24 @@
+     }
+     fun dsp(value: DspConfig) { player.dsp(value); config = player.config }
+     fun volume(value: Float) { player.volume(value); gain = player.gain }
+-    fun connect(base: String, token: String, executable: String) {
+-        val api = if (base.isBlank()) null else ZiziClient(base, token, DesktopPreferences.installId)
+-        searchJob?.cancel(); results = emptyList(); searching = false
+-        server = base.trim().trimEnd('/'); ffmpeg = executable.trim().removeSurrounding("\"")
+-        client = api; player.client = api; player.ffmpeg = ffmpeg
+-        DesktopPreferences.server = server; DesktopPreferences.ffmpeg = ffmpeg
+-        searchMessage = if (api == null) "Укажи сервер в настройках" else "Настройки применены. Введи запрос для проверки подключения"
+-    }
+     fun search(query: String) {
+         searchJob?.cancel(); results = emptyList()
+         val api = client
+-        if (api == null) { searching = false; searchMessage = "Открой настройки и подключи сервер"; return }
++        if (api == null) { searching = false; searchMessage = connectionMessage; return }
+         if (query.isBlank()) { searching = false; searchMessage = "Введи название трека или исполнителя"; return }
++        if (query.trim().length > 300) { searching = false; searchMessage = "Запрос слишком длинный"; return }
++        recentSearches = (listOf(query.trim()) + recentSearches).distinctBy { it.lowercase(java.util.Locale.ROOT) }.take(20)
++        DesktopPreferences.recentSearches = recentSearches
+         searching = true; searchMessage = "Ищем музыку…"
+         searchJob = scope.launch {
+             try {
+                 val found = runInterruptible(Dispatchers.IO) { api.search(query.trim()) }
+-                results = found; searchMessage = if (found.isEmpty()) "Ничего не найдено" else "${found.size} треков · нажми для воспроизведения"
++                results = found; connectionMessage = "Каталог доступен"; searchMessage = if (found.isEmpty()) "Ничего не найдено" else "${found.size} треков · нажми для воспроизведения"
+             } catch (e: CancellationException) { throw e }
+             catch (e: Exception) {
++                connectionMessage = "Не удалось выполнить запрос"
+                 searchMessage = if (e is NetworkFailure) when (e.code) {
+-                    401 -> "Неверный токен. Проверь настройки сервера"
++                    401 -> "Сервер отклонил авторизацию · проверь конфигурацию релиза"
+                     429 -> "Слишком много запросов. Повтори позже"
+                     else -> "Ошибка сервера HTTP ${e.code}"
+                 } else "Не удалось подключиться: проверь адрес, TLS и сеть"
+@@ -97,7 +130,7 @@
+     }
+ }
+ 
+-private data class CoverData(val image: ImageBitmap, val accent: Color)
++private data class CoverData(val image: ImageBitmap)
+ private object Covers {
+     private val cache = object : LinkedHashMap<String, CoverData>(64, 0.75f, true) {
+         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, CoverData>?): Boolean = size > 64
+@@ -120,11 +153,7 @@
+                     val scale = maxOf(w, h) / 480
+                     if (scale > 1) parameters.setSourceSubsampling(scale, scale, 0, 0)
+                     val image = reader.read(0, parameters)
+-                    var r = 0L; var g = 0L; var b = 0L; var count = 0
+-                    for (y in 0 until image.height step 6) for (x in 0 until image.width step 6) {
+-                        val c = image.getRGB(x, y); r += c shr 16 and 255; g += c shr 8 and 255; b += c and 255; count++
+-                    }
+-                    CoverData(image.toComposeImageBitmap(), Color((r / count).toInt(), (g / count).toInt(), (b / count).toInt()))
++                    CoverData(image.toComposeImageBitmap())
+                         .also { synchronized(cache) { cache[key] = it } }
+                 } finally { reader.dispose() }
+             }
+@@ -159,9 +188,12 @@
+     val ui = remember { DesktopUi(scope) }
+     var closing by remember { mutableStateOf(false) }
+     Window(onCloseRequest = { if (!closing) { closing = true; ui.player.close { exitApplication() } } },
+-        title = "ZiziPlayer · Desktop 0.3 preview", state = rememberWindowState(width = 1240.dp, height = 820.dp)) {
++        title = "ZiziPlayer · Desktop 0.3.1 preview", state = rememberWindowState(width = 1240.dp, height = 820.dp)) {
+         LaunchedEffect(Unit) { window.minimumSize = java.awt.Dimension(920, 650) }
+-        MaterialTheme(colorScheme = darkColorScheme(primary = Brand, onPrimary = Color.Black, background = Base, surface = Panel)) {
++        MaterialTheme(colorScheme = darkColorScheme(primary = Ink, onPrimary = Color.Black, background = Base,
++            onBackground = Ink, surface = Panel, onSurface = Ink, surfaceVariant = Chip,
++            onSurfaceVariant = Muted, secondaryContainer = Chip, onSecondaryContainer = Ink,
++            surfaceTint = Color.Transparent, outline = Color(0xFF303030))) {
+             Surface(Modifier.fillMaxSize(), color = Base) { DesktopContent(ui, closing) }
+         }
+     }
+@@ -171,61 +203,92 @@
+     val metadata by s.player.metadata.collectAsState()
+     var page by remember { mutableStateOf("Медиатека") }
+     var query by remember { mutableStateOf("") }
++    var submitted by remember { mutableStateOf(false) }
++    val focusManager = LocalFocusManager.current
++    fun submitSearch(value: String) {
++        if (value.isBlank()) return
++        query = value; submitted = true; focusManager.clearFocus(); s.search(value)
++    }
+     var settings by remember { mutableStateOf(false) }
+     var sourceDialog by remember { mutableStateOf(false) }
+     var effects by remember { mutableStateOf(false) }
+     var expanded by remember { mutableStateOf(false) }
+     var editing by remember { mutableStateOf(false) }
+-    val cover = coverData(state.track, s.client)
+     Column(Modifier.fillMaxSize().onKeyEvent {
+         if (!editing && !settings && !sourceDialog && !closing && it.type == KeyEventType.KeyUp && it.key == Key.Spacebar) {
+             s.player.togglePause(); true
+         } else false
+     }) {
+         Row(Modifier.weight(1f)) {
+-            Column(Modifier.width(184.dp).fillMaxHeight().background(Color(0xFF111111)).padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
++            Column(Modifier.width(184.dp).fillMaxHeight().background(Panel).padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                 Text("Zizi", style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold)
+-                Text("DESKTOP · 0.3 PREVIEW", color = Muted, style = MaterialTheme.typography.labelSmall)
++                Text("DESKTOP · 0.3.1 PREVIEW", color = Muted, style = MaterialTheme.typography.labelSmall)
+                 Spacer(Modifier.height(16.dp))
+                 for ((label, icon) in listOf("Медиатека" to ZiziIcons.FolderMusic, "Поиск" to ZiziIcons.Search, "Очередь" to ZiziIcons.Queue)) {
+-                    TextButton(onClick = { page = label; query = "" }, modifier = Modifier.fillMaxWidth()) {
+-                        Icon(icon, null, tint = if (page == label) Brand else Muted)
+-                        Spacer(Modifier.width(10.dp)); Text(label, color = if (page == label) Color.White else Muted)
++                    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
++                        .background(if (page == label) Chip else Color.Transparent)
++                        .clickable { s.cancelSearch(); page = label; query = ""; submitted = false; focusManager.clearFocus() }
++                        .padding(horizontal = 12.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
++                        Icon(icon, null, tint = if (page == label) Brand else Muted, modifier = Modifier.size(23.dp))
++                        Spacer(Modifier.width(12.dp)); Text(label, color = if (page == label) Ink else Muted)
+                     }
+                 }
+                 HorizontalDivider()
+                 TextButton(onClick = { s.add(chooseFiles()) }, enabled = !closing) { Text("Добавить файлы") }
+                 TextButton(onClick = { sourceDialog = true }) { Text("Открыть ссылку") }
+                 Spacer(Modifier.weight(1f))
+-                Text(if (s.client != null) "Сервер настроен" else "Сервер не подключён", color = Muted, style = MaterialTheme.typography.bodySmall)
++                Text(s.connectionMessage, color = Muted, style = MaterialTheme.typography.bodySmall)
+                 TextButton(onClick = { settings = true }) { Icon(ZiziIcons.Server, null); Spacer(Modifier.width(8.dp)); Text("Настройки") }
+             }
+-            Column(Modifier.weight(1f).fillMaxHeight().background(Brush.verticalGradient(listOf((cover?.accent ?: Brand).copy(alpha = 0.15f), Base))).padding(24.dp)) {
++            Column(Modifier.weight(1f).fillMaxHeight().background(Base).padding(24.dp)) {
+                 Row(verticalAlignment = Alignment.CenterVertically) {
+                     Text(page, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                     IconButton(onClick = { effects = !effects }) { Icon(ZiziIcons.Equalizer, "Звук Zizi", tint = if (effects) Brand else Color.White) }
+                 }
+                 Spacer(Modifier.height(16.dp))
+-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+-                    OutlinedTextField(query, { query = it }, singleLine = true,
+-                        placeholder = { Text(if (page == "Поиск") "Что хочешь послушать?" else "Найти в списке") },
+-                        leadingIcon = { Icon(ZiziIcons.Search, null) }, modifier = Modifier.weight(1f).onFocusChanged { editing = it.isFocused }.onPreviewKeyEvent {
+-                            if (page == "Поиск" && it.key == Key.Enter && it.type == KeyEventType.KeyUp) { s.search(query); true } else false
+-                        })
+-                    if (page == "Поиск") Button(onClick = { s.search(query) }, enabled = query.isNotBlank() && !s.searching) { Text("Найти") }
++                if (page == "Поиск") {
++                    DesktopSearchField(query, { query = it; submitted = false; s.cancelSearch() },
++                        onSubmit = { submitSearch(query) }, onFocus = { editing = it })
++                } else {
++                    DesktopSearchField(query, { query = it }, onSubmit = { focusManager.clearFocus() },
++                        onFocus = { editing = it }, hint = "Найти в списке", mobileSearch = false)
+                 }
+                 Spacer(Modifier.height(16.dp))
+-                val all = when (page) { "Поиск" -> s.results; "Очередь" -> s.player.queue; else -> s.tracks }
++                val all = when (page) { "Поиск" -> if (submitted) s.results else emptyList(); "Очередь" -> s.player.queue; else -> s.tracks }
+                 val visible = if (page == "Поиск") all else all.filter { (it.title + " " + it.artist).contains(query, true) }
+-                Text(if (page == "Поиск") s.searchMessage else "${all.size} треков · список этой сессии", color = Muted, style = MaterialTheme.typography.bodySmall)
+-                if (s.searching && page == "Поиск") LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 10.dp))
++                Row(verticalAlignment = Alignment.CenterVertically) {
++                    Text(if (page == "Поиск") {
++                        if (submitted) s.searchMessage else if (query.isBlank()) "Поиск музыки" else "Нажми Enter для поиска"
++                    } else "${all.size} треков · список этой сессии", color = Muted,
++                        style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
++                    if (page == "Поиск") SearchRefresh(s.searching, query.isNotBlank()) { submitSearch(query) }
++                }
++                if (page == "Поиск" && !submitted) {
++                    val suggestions = if (query.isBlank()) s.recentSearches.take(6) else
++                        app.ziziplayer.ui.SearchPresentation.completions(query, emptyList(), s.recentSearches,
++                            s.tracks.map { it.title })
++                    if (suggestions.isNotEmpty()) {
++                        Spacer(Modifier.height(17.dp))
++                        Row(verticalAlignment = Alignment.CenterVertically) {
++                            Text(if (query.isBlank()) "Недавние" else "Из истории и медиатеки", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
++                            if (query.isBlank()) TextButton(onClick = s::clearHistory) { Text("Очистить", color = Muted) }
++                        }
++                        suggestions.forEach { suggestion ->
++                            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(4.dp)).clickable { submitSearch(suggestion) }
++                                .padding(vertical = 14.dp, horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
++                                Icon(ZiziIcons.Search, null, tint = Muted, modifier = Modifier.size(22.dp))
++                                Spacer(Modifier.width(17.dp)); Text(suggestion, maxLines = 1, overflow = TextOverflow.Ellipsis)
++                            }
++                        }
++                    }
++                }
+                 Spacer(Modifier.height(12.dp))
+-                if (visible.isEmpty() && !s.searching) {
++                if (visible.isEmpty() && !s.searching && (page != "Поиск" || submitted || (query.isBlank() && s.recentSearches.isEmpty()))) {
+                     Column(Modifier.fillMaxWidth().padding(top = 50.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                         Icon(if (page == "Поиск") ZiziIcons.Search else ZiziIcons.FolderMusic, null, Modifier.size(64.dp), tint = Brand)
+                         Spacer(Modifier.height(18.dp))
+-                        Text(if (page == "Поиск") "Твоя музыка — не только на диске" else "Здесь будет твоя музыка", style = MaterialTheme.typography.titleLarge)
+-                        Text(if (page == "Поиск") "Подключи свой сервер в настройках и найди первый трек" else "Добавь файлы или открой zizi://-ссылку", color = Muted, modifier = Modifier.padding(top = 8.dp))
++                        Text(if (page == "Поиск") if (submitted) "Ничего не найдено" else "Что хочешь послушать?" else "Здесь будет твоя музыка", style = MaterialTheme.typography.titleLarge)
++                        Text(if (page == "Поиск") if (s.client != null) "Треки и исполнители · поиск по каталогу Zizi" else s.connectionMessage else "Добавь файлы или открой zizi://-ссылку", color = Muted, modifier = Modifier.padding(top = 8.dp))
+                     }
+                 }
+                 LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+@@ -246,13 +309,17 @@
+                     }
+                 }
+             }
+-            if (effects) EffectsPanel(s, Modifier.width(300.dp).fillMaxHeight().background(Panel).padding(18.dp))
++            AnimatedVisibility(effects,
++                enter = expandHorizontally(tween(260, easing = FastOutSlowInEasing)) + fadeIn(tween(180)),
++                exit = shrinkHorizontally(tween(220, easing = FastOutSlowInEasing)) + fadeOut(tween(140))) {
++                EffectsPanel(s, Modifier.width(300.dp).fillMaxHeight().background(Panel).padding(18.dp))
++            }
+         }
+         Transport(s, closing) { expanded = true }
+     }
+     if (settings) SettingsDialog(s) { settings = false }
+     if (sourceDialog) SourceDialog(s) { sourceDialog = false }
+-    if (expanded) AlertDialog(onDismissRequest = { expanded = false }, title = { Text("Сейчас играет") }, text = {
++    if (expanded) AlertDialog(containerColor = Panel, tonalElevation = 0.dp, onDismissRequest = { expanded = false }, title = { Text("Сейчас играет") }, text = {
+         Column(horizontalAlignment = Alignment.CenterHorizontally) {
+             Artwork(state.track, s.client, 280.dp); Spacer(Modifier.height(16.dp))
+             Text(state.track?.title ?: "Музыка не выбрана", style = MaterialTheme.typography.titleLarge)
+@@ -295,28 +362,29 @@
+     }
+ }
+ @Composable private fun SettingsDialog(s: DesktopUi, dismiss: () -> Unit) {
+-    var base by remember { mutableStateOf(s.server) }
+-    var token by remember { mutableStateOf("") }
+     var executable by remember { mutableStateOf(s.ffmpeg) }
+-    var error by remember { mutableStateOf("") }
+-    AlertDialog(onDismissRequest = dismiss, title = { Text("Подключение Zizi") }, text = {
+-        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+-            Text("URL и путь сохраняются. Токен — только в памяти до закрытия приложения. Применение заменяет текущий токен; повторно введи его при изменении настроек.", color = Muted)
+-            OutlinedTextField(base, { base = it }, label = { Text("HTTPS-адрес сервера") }, singleLine = true)
+-            OutlinedTextField(token, { token = it }, label = { Text("Bootstrap-токен") }, visualTransformation = PasswordVisualTransformation(), singleLine = true)
+-            OutlinedTextField(executable, { executable = it }, label = { Text("Путь к FFmpeg") }, singleLine = true)
++    AlertDialog(containerColor = Panel, tonalElevation = 0.dp, onDismissRequest = dismiss,
++        title = { Text("Настройки Zizi") }, text = {
++        Column(verticalArrangement = Arrangement.spacedBy(17.dp)) {
++            Text("Подключение", fontWeight = FontWeight.SemiBold)
++            Text(s.connectionMessage, color = Muted)
++            Text("Сервер и авторизация настраиваются в сборке. Ввод ключей в приложении не нужен.", color = Muted)
++            if (s.httpCompatibility) Text("Режим совместимости HTTP: трафик до сервера не зашифрован. Для защиты соединения нужен HTTPS.",
++                color = Brand, style = MaterialTheme.typography.bodySmall)
++            HorizontalDivider(color = Chip)
++            Text("Аудиодекодер", fontWeight = FontWeight.SemiBold)
++            OutlinedTextField(executable, { executable = it }, label = { Text("Путь к FFmpeg") }, singleLine = true,
++                modifier = Modifier.fillMaxWidth())
+             TextButton(onClick = { val picker = JFileChooser(); if (picker.showOpenDialog(null) == JFileChooser.APPROVE_OPTION) executable = picker.selectedFile.absolutePath }) { Text("Выбрать FFmpeg…") }
+-            Text("ffprobe должен лежать рядом с FFmpeg: он читает длительность и теги. Изменения аудио применяются при следующем открытии трека.", color = Muted, style = MaterialTheme.typography.bodySmall)
+-            if (error.isNotEmpty()) Text(error, color = MaterialTheme.colorScheme.error)
+-        }
+-    }, confirmButton = { TextButton(onClick = {
+-        try { s.connect(base, token, executable); token = ""; dismiss() }
+-        catch (_: Exception) { error = "Проверь HTTPS-адрес: без логина, query и fragment. Для локального теста разрешён HTTP loopback." }
+-    }) { Text("Применить") } }, dismissButton = { TextButton(onClick = dismiss) { Text("Отмена") } })
++            Text("ffprobe должен лежать рядом с FFmpeg. Изменения применяются при следующем открытии трека.", color = Muted,
++                style = MaterialTheme.typography.bodySmall)
++        }
++    }, confirmButton = { TextButton(onClick = { s.audioSettings(executable); dismiss() }) { Text("Готово") } },
++        dismissButton = { TextButton(onClick = dismiss) { Text("Отмена") } })
+ }
+ @Composable private fun SourceDialog(s: DesktopUi, dismiss: () -> Unit) {
+     var source by remember { mutableStateOf("") }; var error by remember { mutableStateOf("") }
+-    AlertDialog(onDismissRequest = dismiss, title = { Text("Открыть ссылку") }, text = {
++    AlertDialog(containerColor = Panel, tonalElevation = 0.dp, onDismissRequest = dismiss, title = { Text("Открыть ссылку") }, text = {
+         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+             Text("zizi://dz/ID, zizi://yt/VIDEO_ID, zizi://mix/dz%3AID или прямая HTTPS-ссылка на аудио. Не страница YouTube. HLS/DASH и HTTP-редиректы пока не поддерживаются.")
+             OutlinedTextField(source, { source = it }, singleLine = true, label = { Text("Адрес трека") })
+@@ -364,3 +432,63 @@
+         Text("Профили, speed/pitch и спектр будут отдельными доработками.", style = MaterialTheme.typography.bodySmall)
+     }
+ }
++
++/** Desktop adapter of Android 6.39.9 SearchField: exact heights, radius, type and colors.
++ * Enter / submit icon replace Android's IME action. No outlined Material input here.
++ */
++@Composable private fun DesktopSearchField(
++    text: String, onText: (String) -> Unit, onSubmit: () -> Unit,
++    onFocus: (Boolean) -> Unit, hint: String = "Что хочешь послушать?", mobileSearch: Boolean = true
++) {
++    var focused by remember { mutableStateOf(false) }
++    val focusManager = LocalFocusManager.current
++    val light = mobileSearch && !focused
++    val foreground = if (light) Color(0xFF121212) else Ink
++    Row(Modifier.fillMaxWidth().height(52.dp), verticalAlignment = Alignment.CenterVertically) {
++        Row(Modifier.fillMaxWidth().height(if (focused) 52.dp else 49.5.dp)
++            .clip(RoundedCornerShape(3.5.dp)).background(if (light) Color.White else Color(0xFF292929))
++            .padding(start = 9.5.dp, end = 6.dp), verticalAlignment = Alignment.CenterVertically) {
++            if (focused) IconButton(onClick = { focusManager.clearFocus() }) {
++                Icon(ZiziIcons.ArrowBack, "Закрыть ввод", tint = foreground, modifier = Modifier.size(23.dp))
++            } else Icon(ZiziIcons.Search, null, tint = foreground, modifier = Modifier.size(29.dp))
++            Spacer(Modifier.width(11.dp))
++            BasicTextField(text, { onText(it.take(300)) }, singleLine = true,
++                textStyle = TextStyle(color = foreground, fontSize = 17.sp,
++                    fontWeight = if (focused) FontWeight.Medium else FontWeight.Bold),
++                cursorBrush = SolidColor(Brand),
++                modifier = Modifier.weight(1f).onFocusChanged { focused = it.isFocused; onFocus(it.isFocused) }
++                    .onPreviewKeyEvent {
++                        if (it.key == Key.Enter && it.type == KeyEventType.KeyUp) { onSubmit(); true } else false
++                    }, decorationBox = { inner ->
++                    Box(contentAlignment = Alignment.CenterStart) {
++                        if (text.isEmpty()) Text(hint, color = if (light) Color(0xFF6E6E6E) else Muted,
++                            fontSize = 16.sp, fontWeight = if (focused) FontWeight.Normal else FontWeight.SemiBold)
++                        inner()
++                    }
++                })
++            if (text.isNotEmpty()) {
++                IconButton(onClick = { onText("") }) { Icon(ZiziIcons.Close, "Очистить", tint = foreground, modifier = Modifier.size(22.dp)) }
++                if (mobileSearch) IconButton(onClick = onSubmit) { Icon(ZiziIcons.Search, "Найти", tint = foreground, modifier = Modifier.size(23.dp)) }
++            }
++        }
++    }
++}
++/** Mobile refresh motion: 900 ms linear turn, 340 ms settling to the complete turn. */
++@Composable private fun SearchRefresh(refreshing: Boolean, enabled: Boolean, onClick: () -> Unit) {
++    val angle = remember { Animatable(0f) }
++    LaunchedEffect(refreshing) {
++        if (refreshing) {
++            while (true) {
++                angle.animateTo(angle.value + 360f, tween(900, easing = LinearEasing))
++                angle.snapTo(angle.value % 360f)
++            }
++        } else if (angle.value != 0f) {
++            angle.animateTo(360f, tween(340, easing = FastOutSlowInEasing))
++            angle.snapTo(0f)
++        }
++    }
++    IconButton(onClick = { if (!refreshing) onClick() }, enabled = enabled,
++        modifier = Modifier.size(42.dp).graphicsLayer { rotationZ = angle.value }) {
++        Icon(ZiziIcons.Refresh, "Повторить поиск", tint = if (enabled) Brand else Muted, modifier = Modifier.size(23.dp))
++    }
++}
+--- a/src/main/kotlin/app/ziziplayer/ui/SearchPresentation.kt
++++ b/src/main/kotlin/app/ziziplayer/ui/SearchPresentation.kt
+@@ -0,0 +1,20 @@
++package app.ziziplayer.ui
++
++/** Platform-free rules shared by the ViewModel and collection screen. */
++internal object SearchPresentation {
++    /** Provider completions first, then history and real matched metadata. Never invent titles. */
++    fun completions(query: String, remote: List<String>, history: List<String>, metadata: List<String>): List<String> {
++        val needle = query.trim().lowercase(java.util.Locale.ROOT)
++        if (needle.length < 2) return emptyList()
++        return (remote + (history + metadata).filter { it.lowercase(java.util.Locale.ROOT).contains(needle) })
++            .map { it.trim() }.filter { it.isNotEmpty() }
++            .distinctBy { it.lowercase(java.util.Locale.ROOT) }.take(5)
++    }
++
++    fun nextPage(next: String?, previous: String?, received: Int): String? =
++        next?.takeIf { it.isNotBlank() && it != previous && received > 0 }
++
++    fun durationMinutes(durations: List<Long>, complete: Boolean): Long? =
++        if (!complete || durations.isEmpty() || durations.any { it <= 0L }) null
++        else durations.sum() / 60000L
++}
+--- a/src/test/kotlin/app/ziziplayer/desktop/BundledConnectionTest.kt
++++ b/src/test/kotlin/app/ziziplayer/desktop/BundledConnectionTest.kt
+@@ -0,0 +1,93 @@
++package app.ziziplayer.desktop
++
++import app.ziziplayer.desktop.network.*
++import com.sun.net.httpserver.HttpServer
++import org.junit.Assert.*
++import org.junit.Test
++import java.net.InetSocketAddress
++import java.net.URI
++import java.util.Properties
++import java.util.concurrent.atomic.AtomicInteger
++
++class BundledConnectionTest {
++    private fun props(url: String, allow: Boolean = false) = Properties().apply {
++        setProperty("resolver.url", url); setProperty("resolver.bootstrap", "fixture-bootstrap")
++        setProperty("resolver.allowHttp", allow.toString())
++    }
++    @Test fun bundledHttpsWorksWithoutCompatibilityFlag() {
++        assertFalse(BundledConnection.from(props("https://example.org"))!!.usesHttp)
++    }
++    @Test fun mobileSchemelessOriginNeedsExplicitHttpOptIn() {
++        assertThrows(IllegalArgumentException::class.java) { BundledConnection.from(props("example.org:8080")) }
++        assertTrue(BundledConnection.from(props("example.org:8080", true))!!.usesHttp)
++    }
++    @Test fun httpExceptionDoesNotExtendToOtherOrigins() {
++        val trusted = URI("http://example.org:8080")
++        assertEquals(trusted.resolve("/stream"), HttpTransport.safeUri("http://example.org:8080/stream", trusted))
++        for (raw in listOf("http://other.org:8080/stream", "http://example.org:8081/stream", "http://user@example.org:8080", "file:///tmp/a")) {
++            assertThrows(IllegalArgumentException::class.java) { HttpTransport.safeUri(raw, trusted) }
++        }
++        assertThrows(IllegalArgumentException::class.java) { HttpTransport.safeUri("http://example.org:8080/stream") }
++    }
++    @Test fun bundledConfigRejectsCredentialsQueryAndFragment() {
++        for (url in listOf("https://user:pass@example.org", "https://example.org?a=b", "https://example.org#fragment", "https://example.org:70000"))
++            assertThrows(IllegalArgumentException::class.java) { BundledConnection.from(props(url)) }
++    }
++    @Test fun missingConfigStaysOfflineAndDoesNotUseLegacyPreferences() {
++        assertNull(BundledConnection.from(Properties()))
++    }
++    @Test fun cachedDeviceKeySurvivesClientRecreationWithoutBootstrapExchange() {
++        val store = MemoryDeviceTokenStore()
++        val now = System.currentTimeMillis()
++        store.save(DeviceCredential("fixture-device", now + 86400000, now + 85800000))
++        repeat(2) {
++            val client = ZiziClient("https://example.org", "fixture-bootstrap", "install-fixture", tokenStore = store)
++            assertEquals("Bearer fixture-device", client.headers()["Authorization"])
++            assertEquals("install-fixture", client.headers()["X-Zizi-Install"])
++        }
++        assertFalse(store.load().toString().contains("fixture-device"))
++    }
++    @Test fun expiredCachedKeyIsReplacedAndPersisted() {
++        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
++        server.createContext("/auth/device") { e ->
++            val response = """{"token":"fixture-new","expires_in":86400}""".toByteArray()
++            e.sendResponseHeaders(200, response.size.toLong()); e.responseBody.use { it.write(response) }; e.close()
++        }
++        server.start()
++        try {
++            val store = MemoryDeviceTokenStore().apply { save(DeviceCredential("expired", 1, 1)) }
++            val api = ZiziClient("http://127.0.0.1:${server.address.port}", "fixture-bootstrap", "install-fixture", tokenStore = store)
++            assertEquals("Bearer fixture-new", api.headers()["Authorization"])
++            assertEquals("fixture-new", store.load()!!.token)
++            assertTrue(store.load()!!.expiresAt > System.currentTimeMillis())
++        } finally { server.stop(0) }
++    }
++    @Test fun cached401PerformsOneRecoveryAndRetriesCatalog() {
++        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
++        val authCalls = AtomicInteger(); val searches = AtomicInteger()
++        server.createContext("/auth/device") { e ->
++            authCalls.incrementAndGet()
++            val body = """{"token":"fixture-new","expires_in":86400}""".toByteArray()
++            e.sendResponseHeaders(200, body.size.toLong()); e.responseBody.use { it.write(body) }; e.close()
++        }
++        server.createContext("/catalog/search") { e ->
++            searches.incrementAndGet()
++            if (e.requestHeaders.getFirst("Authorization") == "Bearer fixture-new") {
++                val body = """{"items":[]}""".toByteArray()
++                e.sendResponseHeaders(200, body.size.toLong()); e.responseBody.use { it.write(body) }
++            } else e.sendResponseHeaders(401, -1)
++            e.close()
++        }
++        server.start()
++        try {
++            val now = System.currentTimeMillis()
++            val store = MemoryDeviceTokenStore().apply { save(DeviceCredential("revoked", now + 86400000, now + 85800000)) }
++            val api = ZiziClient("http://127.0.0.1:${server.address.port}", "fixture-bootstrap", "install-fixture", tokenStore = store)
++            assertTrue(api.search("track").isEmpty())
++            assertEquals(1, authCalls.get()); assertEquals(2, searches.get())
++        } finally { server.stop(0) }
++    }
++    @Test fun deviceCredentialIsNotPrintable() {
++        assertFalse(DeviceCredential("fixture-sensitive", 1, 1).toString().contains("fixture-sensitive"))
++    }
++}
+--- a/tools/check_desktop_source.py
++++ b/tools/check_desktop_source.py
+@@ -0,0 +1,41 @@
++"""Static source contracts, NOT a Kotlin compiler or UI/connection integration test."""
++import hashlib
++import json
++import os
++from pathlib import Path
++
++
++def check(root: Path):
++    def read(path): return (root / path).read_text(encoding='utf-8')
++    prefix = 'src/main/kotlin/app/ziziplayer/'
++    ui = read(prefix + 'desktop/ui/DesktopMain.kt')
++    network = read(prefix + 'desktop/network/ZiziClient.kt')
++    bundled = read(prefix + 'desktop/network/BundledConnection.kt')
++    bridge = read(prefix + 'desktop/network/StreamBridge.kt')
++    build = read('build.gradle.kts')
++    checks = {
++        'matte UI has no gradient brush': 'Brush.verticalGradient' not in ui and 'private val Base = Color.Black' in ui,
++        'mobile surface, chip and text colors': all(x in ui for x in ('0xFF101010', '0xFF1B1B1B', '0xFFF6F7F8')),
++        'no server or bootstrap input in settings': 'Bootstrap-токен' not in ui and 'HTTPS-адрес сервера' not in ui and 'fun connect(' not in ui,
++        'bundled client attached to player on startup': 'BundledConnection.load()' in ui and 'player.client = api' in ui,
++        'manual preference not used for bootstrap origin': 'DesktopPreferences.server' not in ui,
++        'audio settings do not replace network client': 's.audioSettings(executable)' in ui,
++        'mobile search geometry': 'RoundedCornerShape(3.5.dp)' in ui and '49.5.dp' in ui and 'fontSize = 17.sp' in ui,
++        'mobile refresh motion': 'tween(900, easing = LinearEasing)' in ui and 'tween(340, easing = FastOutSlowInEasing)' in ui,
++        'authenticated redirects remain disabled': 'instanceFollowRedirects = false' in network,
++        'HTTP opt-in checked by exact origin': 'sameOrigin(uri, legacyOrigin)' in network and 'resolver.allowHttp' in bundled,
++        'stream bridge uses same scoped policy': 'e.requestMethod, target.legacyOrigin)' in bridge,
++        'bootstrap comes from build environment': 'environmentVariable("RESOLVER_TOKEN")' in build,
++        'device key cache wired to auth exchange': 'tokenStore.save(DeviceCredential' in network,
++        'auth backoff remains five minutes': 'retryAt = now + 300_000' in network,
++        'device 401 recovery bounded to one retry': 'if (e.code != 401) throw e' in network and 'return request()' in network,
++    }
++    upstream = json.loads(read('upstream.json'))
++    for item in upstream['files']:
++        checks['upstream hash: ' + item['path']] = hashlib.sha256((root/item['path']).read_bytes()).hexdigest() == item['sha256']
++    for name, passed in checks.items(): print(('PASS ' if passed else 'FAIL ') + name)
++    if not all(checks.values()): raise SystemExit(1)
++    print(f'{len(checks)} static contracts passed. Compilation/runtime tests are separate.')
++
++if __name__ == '__main__':
++    check(Path(os.environ['DESKTOP_PROJECT']))
+--- a/tools/check_kotlin_syntax.py
++++ b/tools/check_kotlin_syntax.py
+@@ -0,0 +1,65 @@
++#!/usr/bin/env python3
++"""Быстрая проверка исходников до сборки: незакрытые блочные комментарии,
++строки и скобки. Ловит именно тот класс ошибок, который сломал 6.19.0:
++последовательность "/*" внутри KDoc открывает ВЛОЖЕННЫЙ комментарий
++(в Kotlin блочные комментарии вкладываются), и файл молча съедается до конца.
++
++Запуск:  python3 tools/check_kotlin_syntax.py app/src
++Код возврата 1, если найдены проблемы, — годится для CI-шага перед gradle.
++"""
++import sys,glob,os
++def check(p):
++    s=open(p,encoding='utf-8').read()
++    i=0;n=len(s);depth=0;brace=0;paren=0;issues=[]
++    line=1
++    while i<n:
++        c=s[i]
++        if c=='\n': line+=1;i+=1;continue
++        if depth>0:
++            if s.startswith('/*',i): depth+=1;i+=2;continue
++            if s.startswith('*/',i): depth-=1;i+=2;continue
++            i+=1;continue
++        if s.startswith('/*',i):
++            depth=1;i+=2;continue
++        if s.startswith('//',i):
++            j=s.find('\n',i); i=n if j<0 else j; continue
++        if s.startswith('"""',i):
++            j=s.find('"""',i+3)
++            if j<0: issues.append((line,'unclosed raw string'));break
++            line+=s.count('\n',i,j+3); i=j+3; continue
++        if c=='"':
++            i+=1
++            while i<n:
++                if s[i]=='\\': i+=2; continue
++                if s[i]=='"': i+=1; break
++                if s[i]=='\n': issues.append((line,'unclosed string'));break
++                i+=1
++            continue
++        if c=="'":
++            i+=1
++            while i<n:
++                if s[i]=='\\': i+=2;continue
++                if s[i]=="'": i+=1;break
++                i+=1
++            continue
++        if c=='{': brace+=1
++        elif c=='}': brace-=1
++        elif c=='(': paren+=1
++        elif c==')': paren-=1
++        if brace<0 or paren<0:
++            issues.append((line,'negative balance'));break
++        i+=1
++    if depth!=0: issues.append(('EOF','unclosed block comment depth=%d'%depth))
++    if brace!=0: issues.append(('EOF','brace balance %d'%brace))
++    if paren!=0: issues.append(('EOF','paren balance %d'%paren))
++    return issues
++bad=0
++root = sys.argv[1] if len(sys.argv) > 1 else 'app/src'
++for p in glob.glob(root+'/**/*.kt',recursive=True)+glob.glob(root+'/**/*.kts',recursive=True):
++    iss=check(p)
++    if iss:
++        bad+=1
++        print(p)
++        for l,m in iss: print('   ',l,m)
++print('files with issues:',bad)
++raise SystemExit(1 if bad else 0)
+--- a/upstream.json
++++ b/upstream.json
+@@ -22,6 +22,10 @@
+     {
+       "path": "src/main/kotlin/app/ziziplayer/ui/components/ZiziIcons.kt",
+       "sha256": "12a2fa73fe880075266832dce8834f8dc5ac99eb2b8dfa2cb970f7538732afe1"
++    },
++    {
++      "path": "src/main/kotlin/app/ziziplayer/ui/SearchPresentation.kt",
++      "sha256": "f9113a50026a4cbf9fdd0f8b52aa405a31e71f752e0d61d60cc9f5369883d0eb"
+     }
+   ]
+-}+}

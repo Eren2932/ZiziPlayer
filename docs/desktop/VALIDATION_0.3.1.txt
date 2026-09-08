@@ -1,0 +1,42 @@
+Validation performed 2026-09-08
+
+PASS matte UI has no gradient brush
+PASS mobile surface, chip and text colors
+PASS no server or bootstrap input in settings
+PASS bundled client attached to player on startup
+PASS manual preference not used for bootstrap origin
+PASS audio settings do not replace network client
+PASS mobile search geometry
+PASS mobile refresh motion
+PASS authenticated redirects remain disabled
+PASS HTTP opt-in checked by exact origin
+PASS stream bridge uses same scoped policy
+PASS bootstrap comes from build environment
+PASS device key cache wired to auth exchange
+PASS auth backoff remains five minutes
+PASS device 401 recovery bounded to one retry
+PASS upstream hash: src/main/kotlin/app/ziziplayer/playback/dsp/Biquad.kt
+PASS upstream hash: src/main/kotlin/app/ziziplayer/playback/dsp/DspConfig.kt
+PASS upstream hash: src/main/kotlin/app/ziziplayer/playback/dsp/DspEngine.kt
+PASS upstream hash: src/main/kotlin/app/ziziplayer/playback/dsp/DspPresets.kt
+PASS upstream hash: src/main/kotlin/app/ziziplayer/ui/components/ZiziIcons.kt
+PASS upstream hash: src/main/kotlin/app/ziziplayer/ui/SearchPresentation.kt
+21 static contracts passed. Compilation/runtime tests are separate.
+
+Python preflight tests:
+.........
+----------------------------------------------------------------------
+Ran 9 tests in 0.001s
+
+OK
+
+Kotlin source delimiter scan (NOT compilation):
+files with issues: 0
+
+Original server device fixture test summary:
+
+утверждений: 46
+все проверки пройдены
+
+NOT RUN: Kotlin/Gradle compilation, all 44 JUnit methods, Windows app-image, live server, visual/audio checks.
+PASS source manifest SHA-256, safe extraction, all extracted files byte-identical.
