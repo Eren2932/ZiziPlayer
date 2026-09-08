@@ -1,0 +1,83 @@
+{
+  "base": "0.3.4-preview",
+  "base_source_sha256": "e0bf26b7404e7697491717908193edc4ed5bc956416713b8a7f498cc126651dd",
+  "target": "0.3.5-preview",
+  "target_source_sha256": "22b82e0940b06f5ada6b3c3ca2588278f18a4ade0b120c38750db490e735f0d0",
+  "files": [
+    {
+      "path": "README.md",
+      "old_sha256": "eed36b01497e103ed49ba2630932e58990e6aa35dc1ee79b4543f394fc92c30d",
+      "new_sha256": "0d958f99a03241e9d22c7f8e2974500bc8778c255d7f14f1863fe1990a3bee50"
+    },
+    {
+      "path": "REVIEW_0.3.5.md",
+      "old_sha256": null,
+      "new_sha256": "fd9582f60c1978257257facd06fd4a89f530fde54b5507249a5bac4d0489587d"
+    },
+    {
+      "path": "VALIDATION.md",
+      "old_sha256": "ed1da235f619413477e0c4776e32d96f4b0db5ae753460aeed95f54079e4b14a",
+      "new_sha256": "6634343b568eb8efec9d062207c60da70ccb3c7f5aa16c1058cd427408d51ede"
+    },
+    {
+      "path": "build.gradle.kts",
+      "old_sha256": "859081f17fc18a4a76da907886946aeec10edf5af20bab89b38e936609b58e62",
+      "new_sha256": "b38d6d0d6ab5844fd6bf79cb37162ffa570a63fe457d6c2b9e28872f1e7733d3"
+    },
+    {
+      "path": "src/main/kotlin/app/ziziplayer/desktop/ui/ArtworkPalette.kt",
+      "old_sha256": "d679b3110aaba97115e1fc180faaa34599c591d303b28bf88248904c45927626",
+      "new_sha256": "eb89cfdc6ad625f4be45a92c5bc51169fb47b13f64cead46106d287bd0096f8c"
+    },
+    {
+      "path": "src/main/kotlin/app/ziziplayer/desktop/ui/DesktopAppearance.kt",
+      "old_sha256": null,
+      "new_sha256": "d3233658550e8c3c5f501edf45684490ec17c07c4dcb7191b21f86a92123fb70"
+    },
+    {
+      "path": "src/main/kotlin/app/ziziplayer/desktop/ui/DesktopMain.kt",
+      "old_sha256": "cd3de795c9ad66ca055d5d37fc6876cfee068a241ce0fddd9be4eb5ba7f1d64f",
+      "new_sha256": "57d277c407214839382931be538fd1f0737481ae5dc64e02d1584c4373bf8f9f"
+    },
+    {
+      "path": "src/main/kotlin/app/ziziplayer/desktop/ui/DesktopUi.kt",
+      "old_sha256": "8930d65298c3eab64ac6e920ae731a93891ae098ddbc60ab7d44fbc296878867",
+      "new_sha256": "8d3fafbea9eff46014919f2c827966ac7d8d05177a062b4a624f5d5a80d928c3"
+    },
+    {
+      "path": "src/main/kotlin/app/ziziplayer/desktop/ui/DiscoveryArtwork.kt",
+      "old_sha256": null,
+      "new_sha256": "75eea30cad678fbef4fa02ba5d1020c20351c6e29e42e5ac01e49b9bd68fb34f"
+    },
+    {
+      "path": "src/main/kotlin/app/ziziplayer/desktop/ui/HeroArtwork.kt",
+      "old_sha256": null,
+      "new_sha256": "5041f0c30e6658c89fa8d231e30cc8bb7c89e72a3b1103c92859979d67ef1ee5"
+    },
+    {
+      "path": "src/main/kotlin/app/ziziplayer/desktop/ui/WindowChrome.kt",
+      "old_sha256": null,
+      "new_sha256": "88e110e852a61f775f580d72d0660048449a35c5abc5b520595a59e018aecf5d"
+    },
+    {
+      "path": "src/test/kotlin/app/ziziplayer/desktop/DesktopHeroTest.kt",
+      "old_sha256": null,
+      "new_sha256": "f421ab581d131f6f96e91be37e749255905392501e4fa46347ea2133880326b4"
+    },
+    {
+      "path": "src/test/kotlin/app/ziziplayer/desktop/DiscoveryArtworkTest.kt",
+      "old_sha256": null,
+      "new_sha256": "af37bdb03add5c7daae4e6b96f4c159720966fc57e16977673903be0dc4782c3"
+    },
+    {
+      "path": "tools/check_desktop_source.py",
+      "old_sha256": "24206a7a9e996f3412f859062bed2f4efa46f5124faf222d52fa1faa700d54e2",
+      "new_sha256": "62ba725836c52330b4e78658520f4d7c62a11f452888857d8f497713f6677a87"
+    },
+    {
+      "path": "tools/check_hero_model.py",
+      "old_sha256": null,
+      "new_sha256": "9741bf83f2915c4f083c7ec2a6e63589029c9ae8f35fa6f626d03f1680b1e1cc"
+    }
+  ]
+}

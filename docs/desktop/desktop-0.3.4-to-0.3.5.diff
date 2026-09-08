@@ -1,0 +1,1354 @@
+--- a/README.md
++++ b/README.md
+@@ -1,18 +1,13 @@
+-# ZiziPlayer Desktop 0.3.4 preview
++# ZiziPlayer Desktop 0.3.5 preview
+ 
++Исходники Windows-приложения на Kotlin / Compose Desktop. Это не готовый EXE и не релиз, прошедший визуальную приёмку Windows.
+ 
+-Подготовлено на базе 0.3.3 и мобильных общих компонентов 6.39.9. Это пакет исходников для Windows CI, не проверенный бинарный релиз.
++В этой версии: панорамные шапки исполнителей, общий плавно затухающий фон коллекций, чёрная рамка окна, настройки оформления, 24 темы поиска с реальными альбомными обложками и исправленная кнопка обновления. Полный разбор, ограничения и checklist — в REVIEW_0.3.5.md; фактические проверки — в VALIDATION.md.
+ 
+-Нижний плеер: собственный тонкий 4dp Slider, круглый hover/focus thumb, центр 700dp с дорожкой 606dp на широком окне, Play32, обложка56, компактная громкость/mute, панель гарнитуры. Таймер изолирован в SeekBar, проверка поколения перемотки сохранена и усилена.
++Сборка: JDK 21, Gradle 8.11.1, FFmpeg/FFprobe. Build-Desktop.ps1 поддерживает -Action check / run / package, -GradleHome и -FfmpegPath. Сначала выполняются тесты, затем упаковка app-image. Зависимости и требования к аудио не изменены. Готовую app-image папку нельзя разделять и переносить один EXE.
+ 
+-Панели: единый DesktopDock, устранён код подмены закрывающейся очереди эквалайзером; убраны конкурирующие анимации ширины. Геометрия переключается атомарно. Сохраняются вкладки/прокрутка, предыдущий режим левой панели.
++Рекомендуемый путь — существующий ручной GitHub Actions workflow основного Eren2932/ZiziPlayer. Проект выбирается desktop/current.json и извлекается ci/extract_desktop.py. Сохраните рабочую конфигурацию RESOLVER_URL / RESOLVER_TOKEN / DESKTOP_ALLOW_HTTP; секреты не нужно вставлять в исходники или чат.
+ 
+-Коллекции: обложка232, hero316, Play56, заголовок до96 с измерением текста, соседние Play/Shuffle; строки40/56dp. Артист получил первый блок из пяти треков и правую колонку локальной медиатеки. Градиент принадлежит всей прокручиваемой странице и доходит до первых строк.
++Перед тестированием сделайте копию %LOCALAPPDATA%/ZiziPlayer и не запускайте две версии одновременно. Медиатека и её формат не изменены. Внешний вид отдельно хранится в Java Preferences. Системную рамку можно вернуть в Настройки → Оформление; изменение применяется после перезапуска.
+ 
+-Поиск: вкладка «Все», первый результат, треки и полки трёх типов коллекций, жанровые точки входа, собственная медиатека/избранное/история. Существующие endpoints, частичные результаты и отмена; без нового рекомендательного сервера. Длительность каталога читается из dur.
+-
+-Устройства: реальные Java Sound mixers, выбор выхода в сеансе, существующий handover для seekable трека, системные настройки Windows. Физическое имя default Bluetooth endpoint Java Sound может не раскрывать; Spotify Connect не имитируется.
+-
+-59 source contracts, Java math/layout, модель контраста и Python connection tests прошли. Восемь новых Kotlin/JUnit tests добавлены, но не запущены. Kotlin/Compose compilation, Windows render и audio-device acceptance требуют Actions и Windows. Полный pixel-perfect/безбаговость не заявляются.
+-
+-Подробности: REVIEW_0.3.4.md, VALIDATION.md. Сборка через существующий Build-Desktop.ps1; инструкции обновления — во внешнем INSTALL_DESKTOP_0.3.4.md.
++Документы предыдущих preview оставлены как историческая справка; текущая версия — 0.3.5. Серверный каталог и персональный рекомендательный сервис в этот пакет не добавлены.
+--- /dev/null
++++ b/REVIEW_0.3.5.md
+@@ -0,0 +1,63 @@
++# Zizi Desktop 0.3.5 preview — изменения и границы проверки
++
++## База и область работы
++
++Исходная ветка main публичного Eren2932/ZiziPlayer получена 8 сентября 2026 через codeload. Использован desktop/current.json: 0.3.4-preview, исходный SHA-256 `e0bf26b7404e7697491717908193edc4ed5bc956416713b8a7f498cc126651dd`. Истории Git в snapshot нет, commit SHA не устанавливался. Изучены исходники десктопа, changelog/review 0.3.3–0.3.4, актуальная мобильная заметка 6.39.9 и контракт картинок server/zizi_browse.py из мобильного ZIP. STATUS.md старее desktop manifest и не использован как номер текущей десктопной версии.
++
++Работа основана на присланных изображениях Zizi 0.3.4 и Spotify: положения шапки при прокрутке, квадратный/круглый портрет, переход к трекам, белый caption, поиск и отключённое обновление. Скриншоты не дают точной функции движения Spotify, поэтому реализована близкая воспроизводимая механика, а не заявлена идентичность внутреннему алгоритму или pixel-perfect результат.
++
++## Шапки и изображения
++
++Один CollectionViewport теперь рисует фон за lazy-списком. Текст и действия прокручиваются нормально; фотография в панорамном режиме движется с коэффициентом 0.28. Затемнение зависит только от текущей позиции, поэтому обратная прокрутка проходит ту же кривую без таймеров и накопления wheel delta. Smoothstep доводит фон до нулевой видимости до удаления первого lazy-элемента. Это устраняет прежний резкий обрыв подложки при смене firstVisibleItemIndex.
++
++Общий viewport подключён к исполнителям, альбомам, плейлистам, избранному, всем трекам, папкам и загрузкам. Для обычных коллекций квадратная обложка остаётся в потоке; общий цветной фон плавно уходит в поверхность. В остальных ScrollList добавлена мягкая тень верхнего края, без выдуманной обложки у страниц, где её нет. Это не полная переделка каждого вложенного скролла эквалайзера или popup.
++
++Панорамная шапка имеет минимум 420 dp на широком контенте, 340 dp на узком. Заголовок рассчитывается по доступной ширине. Широкий исходник с достаточным разрешением используется напрямую; квадратный/вертикальный портрет вписан в широкую композицию с мягким фотографическим окружением и feather-краями. Чёткая часть портрета при подготовке увеличивается не более чем в 1.25 раза. Финальный вывод на большой монитор всё равно может масштабировать подготовленную композицию. Кадрирование сверху сохраняет верхнюю часть изображения, но детектор лиц и индивидуальные фокусные точки не добавлены: нестандартные фотографии следует проверить отдельно.
++
++Для локальных исполнителей, у которых есть лишь обложка трека, это явно написано в шапке. Альбомная картинка не выдаётся за реальное фото артиста. В карточках и сайдбаре круглая форма исполнителей сохранена; новый широкий формат относится к странице исполнителя.
++
++Раньше общий загрузчик уменьшал даже большие шапки примерно до 480 px. Теперь есть thumbnail-tier 480 и hero-tier до 1600 px; защищённые оригинальные байты на диске общие. Сервер уже предпочитает XL-картинки, URL не переписываются и новый источник не добавлен. Подготовка изображения выполняется на IO, не при скролле. Лимиты изображения и 5 МБ ответа сохранены; memory LRU ограничен одновременно 64 записями и приблизительно 64 МиБ декодированных пикселей. Это не лимит всей памяти приложения: у Compose, временных буферов и отображаемых изображений есть собственные расходы.
++
++Удалён скачок между соседними 1dp-стопами градиента. Нижний край фото совпадает с уже затухающим оттенком следующего блока даже во время прокрутки. Тон принадлежит открытой странице, а не другой играющей песне. Настройка цвета обложки сохранена. Численная проверка сплошного цвета не является измерением контраста поверх реальных фотографий.
++
++## Окно и настройки
++
++По умолчанию окно undecorated с чёрным caption 32dp: сворачивание, разворачивание/восстановление, закрытие, draggable area и двойной щелчок. Использованы штатные API Compose 1.7.3; наличие undecorated resizer и сигнатура WindowDraggableArea сверены по upstream-коду соответствующего тега. Обработчик двойного щелчка наблюдает pointer events, не потребляя первый down и не ломая drag. Закрытие через caption и Window.onCloseRequest использует один существующий путь сохранения и остановки.
++
++Это собственная рамка, не перекраска Windows DWM. Полное соответствие нативным Snap Layouts, меню Alt+Space, перетаскивание из maximized и multi-monitor DPI не обещаются. В настройках есть возврат стандартной системной рамки после перезапуска; её цвет тогда задаёт Windows. Переключатель не уничтожает окно и не прерывает проигрывание немедленно.
++
++Настройки получили видимые секции, поиск, контрастные карточки, scrollbar и быстрый переход к аудиовыходам. Добавлены панорамные шапки, движение фона и системная рамка. Отключение движения убирает параллакс, анимацию смены оттенка шапки и hover-подъём жанров; это не глобальное отключение всех анимаций приложения. Настройки оформления сохраняются отдельным последовательным IO-writer в Java Preferences (`app/ziziplayer/desktop/appearance`); JSON медиатеки не мигрирует. Ошибка записи выводится пользователю. В Windows Java Preferences обычно хранится в реестре пользователя.
++
++Сообщения вроде «Выход выбран» теперь поверх содержимого над плеером, а не дополнительная полоса, смещающая шапку и всю прокрутку. Сообщение о read-only библиотеке не скрыто.
++
++## Поиск — дополнительные пожелания в этом диалоге
++
++Убраны стартовые длинные пояснения про подсказки, происхождение выдачи и мелкое «Найти в каталоге» под каждой карточкой. Полезные ошибки и состояние запроса сохранены. Обычные подсказки внутри поля поиска не удалены.
++
++Вместо восьми пустых жанровых плиток — 24 тематических входа: фонк, бразильский фанк, slowed, sped-up, рэп, хип-хоп, электроника, рок, поп, инди, техно, хаус, drum & bass, трэп, R&B/соул, джаз, lo-fi, эмбиент, тренировка, концентрация, классика, саундтреки, метал и K-pop. На каждой плитке до двух настоящих альбомных обложек из существующего поиска каталога, с наклоном +14°/-9°, тенью и небольшим hover-подъёмом. Нажатие на жанр открывает поиск по теме; на обложку — соответствующий реальный альбом. Карточки своих исполнителей открывают исполнителя, используя известный ID, либо явный поиск при отсутствии ID.
++
++Это расширение навигации и визуальной витрины существующего каталога, НЕ увеличение серверной музыкальной базы и НЕ новый персональный рекомендательный движок. Релевантность подборок зависит от существующего album search; для некоторых запросов результат может быть пустым. Тогда остаётся декоративная пластинка, не случайная и не вымышленная обложка.
++
++Запросы изображений подборок запускаются при композиции видимых/предзагруженных lazy-строк с debounce 180ms; максимум два одновременных album search, cache до 48 тем на 10 минут и 60 секунд backoff пустого/ошибочного результата. Сами картинки проходят существующий image transport с тремя permits. Здесь, в отличие от шапок, действительно добавлены запросы ради заполнения витрины. Отмена распространяется наружу; refresh-инвалидация не позволяет старому запросу повторно заселить очищенный cache.
++
++Ошибка обновления: старая кнопка была disabled при пустом локальном query, хотя верхний searchText уже содержал текст. Теперь refresh читает видимое поле. С текстом — запускает/перезапускает актуальный поиск, без текста — сбрасывает кэш тематической витрины и возвращает её. Нажатие во время поиска не игнорируется. Повторная выдача сервера может содержать те же обложки: refresh не обещает случайную ротацию.
++
++## Что не менялось
++
++Побайтово сохранены DesktopPlayer, Engine, Decoder, Sink, Pcm, Metadata, AudioOutputs, OfflineFiles, LibraryStore и четыре сетевых файла. UI orchestration изменена для отдельного сохранения внешнего вида и запросов витрины. Семь upstream-компонентов, включая DSP и общие иконки, сохранены по hash. Android ZIP, server, connection/auth/redirect policy, зависимости Gradle и workflows не изменялись. Версии build/package/caption подняты до 0.3.5.
++
++## Выполнено в the Computer
++
++Пройдены 88 статических source-contract проверок, проверка баланса Kotlin/KTS, 9 Python connection tests, независимая численная модель 4096 цветов (минимальный контраст сплошной подложки 5.221:1), 100424 численных сценария fade/seam, сравнение 13 критичных файлов с базой, upstream SHA-проверки, проверка содержимого ZIP и извлечение существующим CI-extractor. Логи лежат в VALIDATION_0.3.5.txt. Строковые контракты и баланс скобок НЕ являются компилятором.
++
++Добавлены 22 Kotlin/JUnit теста: движение и реверс, границы lazy header, подготовка широких/маленьких изображений, конфигурация оформления, 24 жанра, dedup/coalescing, concurrency, TTL, отмена, refresh и устаревшие ответы. Они НЕ запускались здесь. В доступном инструментарии нет Kotlin/Gradle runtime для полной сборки, Windows renderer и GUI аудиопроверки. На GitHub ничего не отправлено, Actions не запускался. Изображений отрендеренного 0.3.5 здесь нет.
++
++## Обязательная приёмка Windows после зелёного Actions
++
++Проверить 960×680, 1280×800, 1440×900, полный экран и DPI 100/125/150%. На BLOK3 и других артистах: верх, четверть/половина прокрутки, полный уход шапки, обратный ход и быстрые реверсы. Проверить длинный заголовок, светлую/тёмную/отсутствующую/маленькую картинку, локального артиста с альбомной обложкой, открытие другой коллекции и другой играющий трек. Проверить seam и отсутствие светлой полосы на каждой позиции.
++
++Повторить для плейлиста, всех треков, избранного, папки и загрузок. Панорамный режим вкл/выкл; движение вкл/выкл; цвет вкл/выкл. Смена dock и ширины окна на прокрутке, размер/положение текста и отсутствие перекрытия scrollbar.
++
++Окно: drag за подпись, resize за все края, кнопки, двойной щелчок, Alt+F4, taskbar minimize/restore, перемещение между мониторами, maximized restore, корректное сохранение при закрытии. Для обязательных нативных возможностей включить системную рамку и перезапустить.
++
++Поиск: ввести BLOK3 без Enter и нажать refresh; изменить поле поверх старого результата и снова refresh; очистить поле и обновить витрину; повторить во время активной загрузки. Скроллить все 24 темы, открыть жанр и обложку, проверить offline/пустой ответ и возврат сети, быстрый выход со страницы. Проверить, что подсказки, медиатека и проигрывание не сломаны. Оценить реальную тематическую релевантность серверного поиска.
+--- a/VALIDATION.md
++++ b/VALIDATION.md
+@@ -1,14 +1,5 @@
+-# Проверки Desktop 0.3.4 preview
++# Desktop 0.3.5 — статус проверки
+ 
+-Выполнены на the Computer без Gradle/Compose зависимостей:
++88 статических source contracts, баланс Kotlin/KTS, 9 Python connection tests, независимые модели контраста и fade/seam, hash-проверки исходной базы и критичных файлов выполнены в the Computer. Финальная упаковка проверена через ci/extract_desktop.py.
+ 
+-- 59 статических source contracts, включая семь upstream SHA-256.
+-- Проверка скобок/строк/комментариев Kotlin: 0 файлов с проблемами. Это НЕ компилятор.
+-- Реальное исполнение Java production math: 19 сценариев, цветовые/случайные выборки.
+-- Реальное исполнение Java production layout: 17 286 конфигураций, плюс размеры hero/прогресса.
+-- Независимая модель 4096 цветов: минимальный контраст #F6F7F8 к новому solid header ~5.221:1.
+-- 9 Python-тестов безопасного подключения — прошли.
+-
+-Добавлены восемь Kotlin/JUnit-тестов (семь DesktopRefinementTest и один CatalogBrowseTest). Они НЕ запускались здесь. Существующие Kotlin/audio tests также не запускались. Java-проверки не проверяют Compose layout или Kotlin API compatibility.
+-
+-Windows EXE не собран; реальный рендер, pointer input, hotplug и переключение гарнитуры на Windows не испытаны. Никаких новых зависимостей не установлено. Финальная проверка ZIP/hash/extract — во внешнем docs/desktop/VALIDATION_0.3.4.txt.
++Полная Kotlin/Compose compilation, 22 новых JUnit-теста и существующие JVM/audio integration tests здесь НЕ запускались. Windows app-image не собран; скриншотного сравнения 0.3.5 со Spotify и Windows GUI/audio приёмки нет. Нужно выполнить существующий Actions workflow и checklist REVIEW_0.3.5.md. Полные логи внешнего repo-update пакета находятся в docs/desktop/VALIDATION_0.3.5.txt.
+--- a/build.gradle.kts
++++ b/build.gradle.kts
+@@ -6,7 +6,7 @@
+     id("org.jetbrains.compose") version "1.7.3"
+ }
+ group = "app.ziziplayer.desktop"
+-version = "0.3.4"
++version = "0.3.5"
+ kotlin { jvmToolchain(21) }
+ dependencies {
+     implementation(compose.desktop.currentOs)
+@@ -26,7 +26,7 @@
+         mainClass = "app.ziziplayer.desktop.ui.DesktopMainKt"
+         nativeDistributions {
+             packageName = "ZiziDesktop"
+-            packageVersion = "0.3.4"
++            packageVersion = "0.3.5"
+             includeAllModules = true
+         }
+     }
+--- a/src/main/kotlin/app/ziziplayer/desktop/ui/ArtworkPalette.kt
++++ b/src/main/kotlin/app/ziziplayer/desktop/ui/ArtworkPalette.kt
+@@ -139,15 +139,18 @@
+     val lch = Color(primary).toOklch()
+     return oklch(lch[0].coerceIn(.36f, .50f), (lch[1] * 1.18f).coerceAtMost(.22f), lch[2])
+ }
+-@Composable internal fun animatedCollectionTone(target: Color): Color {
++@Composable internal fun animatedCollectionTone(target: Color, motion: Boolean = true): Color {
+     val progress = remember { Animatable(1f) }
+     var from by remember { mutableStateOf(target) }
+     var to by remember { mutableStateOf(target) }
+-    LaunchedEffect(target) {
+-        from = blendOklch(from, to, progress.value); to = target; progress.snapTo(0f)
+-        progress.animateTo(1f, tween(380, easing = FastOutSlowInEasing))
++    LaunchedEffect(target, motion) {
++        from = blendOklch(from, to, progress.value); to = target
++        if (!motion) progress.snapTo(1f) else {
++            progress.snapTo(0f)
++            progress.animateTo(1f, tween(380, easing = FastOutSlowInEasing))
++        }
+     }
+-    return blendOklch(from, to, progress.value)
++    return if (motion) blendOklch(from, to, progress.value) else target
+ }
+ 
+ /** Opaque sRGB shading into the page surface: saturation is not diluted by alpha compositing. */
+--- /dev/null
++++ b/src/main/kotlin/app/ziziplayer/desktop/ui/DesktopAppearance.kt
+@@ -0,0 +1,34 @@
++package app.ziziplayer.desktop.ui
++
++import java.util.prefs.Preferences
++
++/** UI-only preferences: library schema, DSP and network configuration are untouched. */
++internal data class DesktopAppearance(
++    val motion: Boolean = true,
++    val panoramicArtists: Boolean = true,
++    val nativeFrame: Boolean = false
++) {
++    fun save() {
++        val p = preferences()
++        p.putBoolean("motion", motion)
++        p.putBoolean("panoramicArtists", panoramicArtists)
++        p.putBoolean("nativeFrame", nativeFrame)
++        p.flush()
++    }
++    companion object {
++        private fun preferences() = Preferences.userRoot().node("app/ziziplayer/desktop/appearance")
++        fun load(): DesktopAppearance = runCatching {
++            val p = preferences()
++            DesktopAppearance(p.getBoolean("motion", true), p.getBoolean("panoramicArtists", true),
++                p.getBoolean("nativeFrame", false))
++        }.getOrDefault(DesktopAppearance())
++    }
++}
++
++/** Pure deterministic scroll model: no timer, accumulated wheel delta or direction hysteresis. */
++internal object HeroMotion {
++    fun progress(scroll: Float, height: Float): Float = (scroll / height.coerceAtLeast(1f)).coerceIn(0f, 1f)
++    fun smooth(value: Float): Float { val t = value.coerceIn(0f, 1f); return t * t * (3f - 2f * t) }
++    fun visibility(scroll: Float, height: Float): Float = 1f - smooth(progress(scroll, height))
++    fun travel(scroll: Float, motion: Boolean): Float = -scroll.coerceAtLeast(0f) * (if (motion) .28f else 1f)
++}
+--- a/src/main/kotlin/app/ziziplayer/desktop/ui/DesktopMain.kt
++++ b/src/main/kotlin/app/ziziplayer/desktop/ui/DesktopMain.kt
+@@ -21,6 +21,13 @@
+ import androidx.compose.ui.graphics.Brush
+ import androidx.compose.ui.platform.LocalDensity
+ import androidx.compose.ui.unit.IntOffset
++import androidx.compose.ui.unit.IntSize
++import androidx.compose.ui.graphics.FilterQuality
++import androidx.compose.ui.graphics.drawscope.clipRect
++import androidx.compose.ui.window.WindowPlacement
++import androidx.compose.foundation.window.WindowDraggableArea
++import androidx.compose.ui.input.pointer.*
++import kotlin.math.roundToInt
+ import androidx.compose.ui.window.Popup
+ import androidx.compose.ui.window.PopupProperties
+ import androidx.compose.ui.graphics.SolidColor
+@@ -88,7 +95,9 @@
+ private val Ink = Color(0xFFF6F7F8)
+ private val Muted = Color(0xFF9A9A9A)
+ 
+-private data class CoverData(val image: ImageBitmap, val palette: MattePalette, val primary: Int?)
++private data class CoverData(val image: ImageBitmap, val palette: MattePalette, val primary: Int?, val banner: ImageBitmap? = null) {
++    val bytes: Long get() = image.width.toLong() * image.height * 4 + (banner?.let { it.width.toLong() * it.height * 4 } ?: 0L)
++}
+ private object Covers {
+     val gate = kotlinx.coroutines.sync.Semaphore(3)
+     private val loadLocks = Array(32) { Any() }
+@@ -134,17 +143,18 @@
+             .joinToString("") { "%02x".format(it.toInt() and 255) }
+         return directory.resolve("$hash.img")
+     }
+-    fun load(track: PlayerTrack, api: ZiziClient?): CoverData? =
+-        synchronized(loadLocks[(track.id.hashCode() and Int.MAX_VALUE) % loadLocks.size]) { loadLocked(track, api) }
+-    private fun loadLocked(track: PlayerTrack, api: ZiziClient?): CoverData? {
++    fun load(track: PlayerTrack, api: ZiziClient?, hero: Boolean = false): CoverData? =
++        synchronized(loadLocks[(track.id.hashCode() and Int.MAX_VALUE) % loadLocks.size]) { loadLocked(track, api, hero) }
++    private fun loadLocked(track: PlayerTrack, api: ZiziClient?, hero: Boolean): CoverData? {
+         val local = !track.source.contains("://") && !track.source.startsWith("collection:")
+-        val key = track.id + ":" + track.artworkUrl + if (local) ":" + File(track.source).lastModified() else ""
++        val diskKey = track.id + ":" + track.artworkUrl + if (local) ":" + File(track.source).lastModified() else ""
++        val key = diskKey + if (hero) ":hero-v1" else ":thumb"
+         synchronized(cache) {
+             cache[key]?.let { return it }
+             if ((failed[key] ?: 0L) > System.currentTimeMillis() && track.artwork == null) return null
+         }
+         val result = runCatching {
+-            val path = diskPath(key)
++            val path = diskPath(diskKey)
+             val cached = runCatching { if (java.nio.file.Files.isRegularFile(path) && java.nio.file.Files.size(path) <= 5 * 1024 * 1024)
+                 java.nio.file.Files.readAllBytes(path) else null }.getOrNull()
+             val bytes = track.artwork ?: cached ?: if (local) Metadata.read(
+@@ -160,25 +170,33 @@
+                     val w = reader.getWidth(0); val h = reader.getHeight(0)
+                     require(w in 1..8192 && h in 1..8192 && w.toLong() * h <= 20_000_000)
+                     val parameters = reader.defaultReadParam
+-                    val scale = maxOf(w, h) / 480
++                    val maxSide = if (hero) 1600 else 480
++                    val scale = ((maxOf(w, h) + maxSide - 1) / maxSide).coerceAtLeast(1)
+                     if (scale > 1) parameters.setSourceSubsampling(scale, scale, 0, 0)
+                     val image = reader.read(0, parameters)
+-                    if (cached == null) rememberDisk(key, bytes)
+-                    sampleArtwork(image).let { primary -> CoverData(image.toComposeImageBitmap(), artworkPalette(primary), primary) }
++                    if (cached == null) rememberDisk(diskKey, bytes)
++                    sampleArtwork(image).let { primary -> CoverData(image.toComposeImageBitmap(), artworkPalette(primary), primary,
++                        if (hero) prepareHeroArtwork(image).toComposeImageBitmap() else null) }
+                 } finally { reader.dispose() }
+             }
+         }.getOrNull()
+         synchronized(cache) {
+-            if (result != null) { cache[key] = result; failed.remove(key) }
++            if (result != null) {
++                cache[key] = result; failed.remove(key)
++                // Pixel budget as well as entry count; high-resolution headers cannot fill RAM.
++                while (cache.values.sumOf { it.bytes } > 64L * 1024 * 1024 && cache.size > 1) {
++                    val oldest = cache.entries.iterator(); oldest.next(); oldest.remove()
++                }
++            }
+             else failed[key] = System.currentTimeMillis() + 60_000
+         }
+         return result
+     }
+ }
+-@Composable private fun coverData(track: PlayerTrack?, api: ZiziClient?): CoverData? {
+-    val cover by produceState<CoverData?>(null, track?.id, track?.artwork, track?.artworkUrl, api) {
++@Composable private fun coverData(track: PlayerTrack?, api: ZiziClient?, hero: Boolean = false): CoverData? {
++    val cover by produceState<CoverData?>(null, track?.id, track?.artwork, track?.artworkUrl, api, hero) {
+         value = null
+-        if (track != null) value = Covers.gate.withPermit { withContext(Dispatchers.IO) { Covers.load(track, api) } }
++        if (track != null) value = Covers.gate.withPermit { withContext(Dispatchers.IO) { Covers.load(track, api, hero) } }
+     }
+     return cover
+ }
+@@ -206,9 +224,13 @@
+     if (snapshot != null) {
+         val ui = remember { DesktopUi(scope, store, snapshot) }
+         var closing by remember { mutableStateOf(false) }
+-        Window(onCloseRequest = { if (!closing) { closing = true; ui.shutdown(done = { exitApplication() }, failed = { closing = false }) } },
+-            title = "ZiziPlayer · Desktop 0.3.4 preview", state = rememberWindowState(width = 1440.dp, height = 850.dp)) {
+-            LaunchedEffect(Unit) { window.minimumSize = java.awt.Dimension(960, 680) }
++        val windowState = rememberWindowState(width = 1440.dp, height = 850.dp)
++        // Decoration is chosen once: changing it on a displayable AWT window is illegal.
++        val nativeFrame = remember { ui.appearance.nativeFrame }
++        val close: () -> Unit = { if (!closing) { closing = true; ui.shutdown(done = { exitApplication() }, failed = { closing = false }) } }
++        Window(onCloseRequest = close, undecorated = !nativeFrame, resizable = true,
++            title = "ZiziPlayer · Desktop 0.3.5 preview", state = windowState) {
++            LaunchedEffect(Unit) { window.minimumSize = java.awt.Dimension(960, 680); window.background = java.awt.Color.BLACK }
+             val state by ui.player.state.collectAsState()
+             // Retain previous palette while the next cover decodes; obsolete loads cannot publish.
+             val target by produceState(MattePalette(), state.track?.id, state.track?.artwork, state.track?.artworkUrl, ui.ffmpeg, ui.client, ui.prefs.artworkColor) {
+@@ -221,7 +243,44 @@
+                     onBackground = Ink, surface = Panel, onSurface = Ink, surfaceVariant = Chip,
+                     onSurfaceVariant = Muted, secondaryContainer = Chip, onSecondaryContainer = Ink,
+                     surfaceTint = Color.Transparent, outline = Color(0xFF303030))) {
+-                    Surface(Modifier.fillMaxSize(), color = Base) { DesktopContent(ui, closing) }
++                    Surface(Modifier.fillMaxSize(), color = Base) {
++                        Column(Modifier.fillMaxSize()) {
++                            if (!nativeFrame) Row(Modifier.fillMaxWidth().height(32.dp).background(Base), verticalAlignment = Alignment.CenterVertically) {
++                                val maximize: () -> Unit = {
++                                    windowState.placement = if (windowState.placement == WindowPlacement.Maximized) WindowPlacement.Floating else WindowPlacement.Maximized
++                                }
++                                WindowDraggableArea(Modifier.weight(1f).fillMaxHeight()) {
++                                    Box(Modifier.fillMaxSize().pointerInput(Unit) {
++                                        // Observe, do not consume: detectTapGestures here would steal
++                                        // the first down from WindowDraggableArea and break window dragging.
++                                        awaitPointerEventScope {
++                                            var lastPress = 0L
++                                            var pressPosition = androidx.compose.ui.geometry.Offset.Zero
++                                            while (true) {
++                                                val event = awaitPointerEvent(PointerEventPass.Initial)
++                                                val change = event.changes.firstOrNull() ?: continue
++                                                if (event.type == PointerEventType.Press && event.buttons.isPrimaryPressed) {
++                                                    if (lastPress != 0L && change.uptimeMillis - lastPress in 0L..400L &&
++                                                        (change.position - pressPosition).getDistance() < 6.dp.toPx()) {
++                                                        maximize(); lastPress = 0L
++                                                    } else { lastPress = change.uptimeMillis; pressPosition = change.position }
++                                                } else if (event.type == PointerEventType.Move &&
++                                                    (change.position - pressPosition).getDistance() > 6.dp.toPx()) lastPress = 0L
++                                            }
++                                        }
++                                    }
++                                        .padding(start = 16.dp), contentAlignment = Alignment.CenterStart) {
++                                        Text("ZiziPlayer · Desktop 0.3.5 preview", color = Muted, fontSize = 11.sp)
++                                    }
++                                }
++                                WindowCaptionButton("Свернуть окно", 0) { windowState.isMinimized = true }
++                                WindowCaptionButton(if (windowState.placement == WindowPlacement.Maximized) "Восстановить окно" else "Развернуть окно",
++                                    if (windowState.placement == WindowPlacement.Maximized) 2 else 1, maximize)
++                                WindowCaptionButton("Закрыть приложение", 3, close)
++                            }
++                            Box(Modifier.weight(1f)) { DesktopContent(ui, closing) }
++                        }
++                    }
+                 }
+             }
+         }
+@@ -345,11 +404,6 @@
+                 onCard = ::openCard, onCreate = { playlistDialog = true }, onSource = { sourceDialog = true }, closing = closing) }
+             Column(Modifier.weight(1f).fillMaxHeight().clip(RoundedCornerShape(8.dp)).background(Panel).padding(horizontal = if (detail != null || s.openPage != null) 0.dp else 20.dp, vertical = 0.dp)) {
+                 if (!s.store.writable) Text("Библиотека доступна только для чтения. Изменения этого сеанса не сохранятся.", color = Brand, modifier = Modifier.padding(bottom = 12.dp))
+-                if (s.notice.isNotEmpty()) Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(Chip).padding(10.dp),
+-                    verticalAlignment = Alignment.CenterVertically) {
+-                    Text(s.notice, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+-                    IconButton(onClick = { s.notice = "" }) { Icon(ZiziIcons.Close, "Закрыть сообщение") }
+-                }
+                 val detailTitle = detail?.let { card ->
+                     if (card.key.startsWith("pl:")) s.library.playlists.find { it.id == card.key.removePrefix("pl:") }?.title ?: card.title else card.title
+                 }
+@@ -359,7 +413,8 @@
+                     val remoteListState = rememberLazyListState()
+                     LaunchedEffect(remote.collection.key) { remoteListState.scrollToItem(0) }
+                     val remoteCollapsed by remember { derivedStateOf { remoteListState.firstVisibleItemIndex > 0 } }
+-                    ScrollList(Modifier.weight(1f).then(collectionBackground(remote.collection.artworkTrack(), s, remoteListState)), state = remoteListState) {
++                    CollectionViewport(remote.collection.artworkTrack(), s, remoteListState,
++                        artist = remote.collection.kind == "artist", modifier = Modifier.weight(1f)) {
+                         item {
+                             CollectionHero(remote.collection.title, remote.collection.subtitle,
+                                 remote.collection.artworkTrack(), s, remote.collection.kind == "artist",
+@@ -369,8 +424,18 @@
+                                 IconButton(onClick = { remote.tracks.shuffled().let { it.firstOrNull()?.let { t -> s.player.play(t, it) } } }, enabled = remote.tracks.isNotEmpty() && !closing) { Icon(ZiziIcons.Shuffle, "Перемешать загруженные треки", Modifier.size(28.dp), tint = Muted) }
+                                 Spacer(Modifier.width(16.dp))
+                                 Text("Загружено ${remote.tracks.size}" + (remote.total?.let { " из $it" } ?: ""), color = Muted, modifier = Modifier.weight(1f))
+-                            }
+-                            TextButton(onClick = { s.playlist(remote.collection.title, remote.tracks); s.notice = "Загруженные треки сохранены отдельным плейлистом." }, enabled = remote.tracks.isNotEmpty()) { Text("Сохранить загруженные треки") }
++                                var collectionMenu by remember(remote.collection.key) { mutableStateOf(false) }
++                                Box {
++                                    IconButton(onClick = { collectionMenu = true }) { Icon(ZiziIcons.More, "Действия с коллекцией", tint = Muted) }
++                                    DropdownMenu(collectionMenu, { collectionMenu = false }) {
++                                        DropdownMenuItem(text = { Text("Сохранить загруженные треки") }, enabled = remote.tracks.isNotEmpty(), onClick = {
++                                            s.playlist(remote.collection.title, remote.tracks)
++                                            s.notice = "Загруженные треки сохранены отдельным плейлистом."
++                                            collectionMenu = false
++                                        })
++                                    }
++                                }
++                            }
+                             if (s.pageError.isNotBlank()) Text(s.pageError, color = MaterialTheme.colorScheme.error)
+                             if (s.opening) LinearProgressIndicator(Modifier.fillMaxWidth())
+                             }
+@@ -395,7 +460,7 @@
+                         }
+                     }
+                 } else if (page == "Настройки") {
+-                    SettingsContent(s) { dock = DesktopDock.EFFECTS }
++                    SettingsContent(s, effects = { dock = DesktopDock.EFFECTS }, devices = { dock = DesktopDock.DEVICES })
+                 } else {
+                     if (detail == null) Row(verticalAlignment = Alignment.CenterVertically) {
+                         Text(if (detail != null) "Медиатека" else page, style = if (detail != null) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+@@ -411,14 +476,20 @@
+                     }
+                     if (detail == null) Spacer(Modifier.height(8.dp))
+                     if (page == "Поиск") {
+-                        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+-                            for ((kind, label) in listOf("all" to "Все", "track" to "Треки", "artist" to "Исполнители", "album" to "Альбомы", "playlist" to "Плейлисты"))
+-                                FilterChip(selected = s.searchKind == kind, onClick = { if (query.isNotBlank()) search(query, kind) else s.selectSearchKind(kind) }, label = { Text(label) })
+-                        }
+-                        Row(verticalAlignment = Alignment.CenterVertically) {
+-                            Text(if (submitted) s.searchMessage else "Введи запрос в строке сверху — подсказки появятся во время ввода", color = Muted, modifier = Modifier.weight(1f))
+-                            SearchRefresh(s.searching, query.isNotBlank()) { search(query) }
+-                        }
++                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
++                            Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
++                                for ((kind, label) in listOf("all" to "Все", "track" to "Треки", "artist" to "Исполнители", "album" to "Альбомы", "playlist" to "Плейлисты"))
++                                    FilterChip(selected = s.searchKind == kind, onClick = {
++                                        if (searchText.isNotBlank()) search(searchText, kind) else { submitted = false; query = ""; s.selectSearchKind(kind) }
++                                    }, label = { Text(label) })
++                            }
++                            SearchRefresh(s.searching || (!submitted && s.discovery.active > 0), !closing,
++                                label = if (searchText.isNotBlank()) "Повторить поиск по текущему тексту" else "Обновить подборки") {
++                                if (searchText.isNotBlank()) search(searchText, s.searchKind)
++                                else { submitted = false; query = ""; s.cancelSearch(); s.refreshDiscovery() }
++                            }
++                        }
++                        if (submitted) Text(s.searchMessage, color = Muted, fontSize = 13.sp, modifier = Modifier.padding(vertical = 8.dp))
+                         if (!submitted) {
+                             SearchHub(s, closing, Modifier.weight(1f), onQuery = { search(it, "all") }, onArtist = ::artist)
+                         } else if (s.searchKind == "all") {
+@@ -473,10 +544,11 @@
+                             val localListState = rememberLazyListState()
+                             val localCollapsed by remember { derivedStateOf { localListState.firstVisibleItemIndex > 0 } }
+                             LaunchedEffect(key, page) { localListState.scrollToItem(0) }
+-                            ScrollList(Modifier.weight(1f).then(collectionBackground(all.firstOrNull(), s, localListState)), state = localListState) {
++                            CollectionViewport(all.firstOrNull(), s, localListState,
++                                artist = key.startsWith("artist:"), modifier = Modifier.weight(1f)) {
+                                 item {
+                                     CollectionHero(detailTitle ?: page, "${all.size} треков", all.firstOrNull(), s, key.startsWith("artist:"),
+-                                        kind = when { key.startsWith("artist:") -> "Исполнитель · локальная медиатека"; playlistId != null -> "Плейлист"; else -> "Медиатека" }) {
++                                        kind = when { key.startsWith("artist:") -> "Исполнитель · обложка локального трека"; playlistId != null -> "Плейлист"; else -> "Медиатека" }) {
+                                         Row(verticalAlignment = Alignment.CenterVertically) {
+                                             CollectionPlay(s, all, closing); Spacer(Modifier.width(16.dp))
+                                             IconButton(onClick = { all.shuffled().let { list -> list.firstOrNull()?.let { s.player.play(it, list) } } }, enabled = all.isNotEmpty() && !closing) { Icon(ZiziIcons.Shuffle, "Перемешать", Modifier.size(28.dp), tint = Muted) }
+@@ -515,6 +587,13 @@
+             onEffects = { dock = dock.toggle(DesktopDock.EFFECTS) },
+             onDevices = { dock = dock.toggle(DesktopDock.DEVICES) }, onArtist = ::artist) { expanded = true }
+     }
++    if (s.notice.isNotEmpty()) Surface(Modifier.align(Alignment.BottomCenter).padding(bottom = 104.dp, start = 24.dp, end = 24.dp).widthIn(max = 680.dp),
++        color = Color(0xFF242424), shape = RoundedCornerShape(10.dp), shadowElevation = 12.dp) {
++        Row(Modifier.padding(start = 16.dp, end = 6.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
++            Text(s.notice, Modifier.weight(1f), color = Ink, fontSize = 13.sp)
++            IconButton(onClick = { s.notice = "" }) { Icon(ZiziIcons.Close, "Закрыть сообщение") }
++        }
++    }
+     }
+     if (sourceDialog) SourceDialog(s) { sourceDialog = false }
+     if (playlistDialog) NameDialog("Новый плейлист", "", { s.playlist(it); playlistDialog = false }) { playlistDialog = false }
+@@ -541,28 +620,32 @@
+ }
+ @Composable private fun CollectionHero(title: String, subtitle: String, track: PlayerTrack?, s: DesktopUi, artist: Boolean,
+     kind: String = if (artist) "Исполнитель" else "Коллекция", actions: @Composable () -> Unit = {}) {
+-    val cover = coverData(track, s.client)
+-    // The scrolling page owns the brush, including actions, table heading and first rows.
++    val panoramic = artist && s.appearance.panoramicArtists
++    val cover = coverData(track, s.client, hero = true)
+     Column(Modifier.fillMaxWidth()) {
+         BoxWithConstraints(Modifier.fillMaxWidth()) {
+             val small = maxWidth < 680.dp
+             val artSize = DesktopLayout.heroArtwork(maxWidth.value).dp
+             val textMeasurer = rememberTextMeasurer()
+             val density = LocalDensity.current
+-            val titleSize = remember(title, maxWidth, density, textMeasurer) {
++            val titleSize = remember(title, maxWidth, density, textMeasurer, panoramic) {
+                 val upper = if (small) 56f else 96f
+                 val measured = textMeasurer.measure(title, style = TextStyle(fontSize = upper.sp, fontWeight = FontWeight.Black),
+                     maxLines = 1, softWrap = false)
+-                val available = with(density) { (maxWidth - artSize - (if (small) 18.dp else 24.dp) - 48.dp).toPx() }
++                val artworkSpace = if (panoramic) 0.dp else artSize + (if (small) 18.dp else 24.dp)
++                val available = with(density) { (maxWidth - 48.dp - artworkSpace).toPx() }
+                 (upper * available / measured.size.width.coerceAtLeast(1)).coerceIn(32f, upper).sp
+             }
+-            Row(Modifier.fillMaxWidth().heightIn(min = DesktopLayout.heroHeight(maxWidth.value).dp).padding(horizontal = 24.dp, vertical = 24.dp), verticalAlignment = Alignment.Bottom) {
+-                Box(Modifier.size(artSize).clip(if (artist) CircleShape else RoundedCornerShape(4.dp)).background(Chip), contentAlignment = Alignment.Center) {
+-                    if (cover != null) Image(cover.image, if (artist && track?.source?.startsWith("collection:") == true) "Фото исполнителя" else "Обложка коллекции",
+-                        Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+-                    else Icon(if (artist) ZiziIcons.Person else ZiziIcons.FolderMusic, null, Modifier.size(64.dp), tint = Muted)
+-                }
+-                Spacer(Modifier.width(if (small) 18.dp else 24.dp))
++            Row(Modifier.fillMaxWidth().heightIn(min = collectionHeroHeight(maxWidth.value, panoramic).dp)
++                .padding(horizontal = 24.dp, vertical = 28.dp), verticalAlignment = Alignment.Bottom) {
++                if (!panoramic) {
++                    Box(Modifier.size(artSize).clip(if (artist) CircleShape else RoundedCornerShape(4.dp)).background(Chip), contentAlignment = Alignment.Center) {
++                        if (cover != null) Image(cover.image, if (artist) "Фото исполнителя" else "Обложка коллекции",
++                            Modifier.fillMaxSize(), contentScale = ContentScale.Crop, filterQuality = FilterQuality.High)
++                        else Icon(if (artist) ZiziIcons.Person else ZiziIcons.FolderMusic, null, Modifier.size(64.dp), tint = Muted)
++                    }
++                    Spacer(Modifier.width(if (small) 18.dp else 24.dp))
++                }
+                 Column(Modifier.weight(1f).padding(bottom = 4.dp)) {
+                     Text(kind, color = Ink, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                     Spacer(Modifier.height(8.dp))
+@@ -575,6 +658,7 @@
+         Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 24.dp)) { actions() }
+     }
+ }
++
+ @Composable private fun CollectionCards(cards: List<LibraryCard>, s: DesktopUi, modifier: Modifier, open: (LibraryCard) -> Unit) {
+     BoxWithConstraints(modifier) {
+         val contentWidth = (maxWidth - 10.dp).coerceAtLeast(0.dp)
+@@ -775,48 +859,48 @@
+ 
+ private data class SettingsSection(val title: String, val icon: ImageVector, val keywords: String)
+ private val settingSections = listOf(
+-    SettingsSection("Оформление", ZiziIcons.Palette, "цвет из обложки amoled тема палитра"),
++    SettingsSection("Оформление", ZiziIcons.Palette, "цвет из обложки amoled тема палитра движение анимация параллакс шапка панорама портрет рамка окно"),
+     SettingsSection("Библиотека", ZiziIcons.Library, "папки сканирование сортировка сетка список"),
+-    SettingsSection("Звук", ZiziIcons.Equalizer, "эквалайзер dsp громкость эффекты глобально"),
++    SettingsSection("Звук", ZiziIcons.Equalizer, "эквалайзер dsp громкость эффекты глобально устройства наушники выход windows"),
+     SettingsSection("Загрузки", ZiziIcons.DownloadDone, "офлайн скачанные память диск"),
+     SettingsSection("Поиск", ZiziIcons.Search, "история недавние запросы"),
+     SettingsSection("О приложении", ZiziIcons.Info, "версия диагностика ffmpeg сеть сервер"))
+ 
+-@Composable private fun SettingsContent(s: DesktopUi, effects: () -> Unit) {
+-    var section by remember { mutableStateOf<String?>(null) }
++@Composable private fun SettingsContent(s: DesktopUi, effects: () -> Unit, devices: () -> Unit) {
++    var section by rememberSaveable { mutableStateOf<String?>("Оформление") }
+     var filter by remember { mutableStateOf("") }
+     var diagnostics by remember { mutableStateOf(false) }
+     var confirmHistory by remember { mutableStateOf(false) }
+     val state by s.player.state.collectAsState()
+-    Row(verticalAlignment = Alignment.CenterVertically) {
+-        if (section != null) IconButton(onClick = { section = null; filter = "" }) { Icon(ZiziIcons.ArrowBack, "Все настройки") }
+-        Text(section ?: "Настройки", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
+-    }
+-    Spacer(Modifier.height(20.dp))
++    Spacer(Modifier.height(22.dp))
++    Text("Настройки", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
++    Text("Оформление, музыка и устройства — под тебя.", color = Muted, fontSize = 13.sp, modifier = Modifier.padding(top = 6.dp, bottom = 16.dp))
+     DesktopSearchField(filter, { filter = it; section = null }, onSubmit = {}, onFocus = {}, hint = "Найти настройку", mobileSearch = false)
+-    Spacer(Modifier.height(20.dp))
++    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
++        FilterChip(section == null, { section = null; filter = "" }, label = { Text("Все") })
++        settingSections.forEach { entry ->
++            FilterChip(section == entry.title, { section = entry.title; filter = "" }, label = { Text(entry.title) })
++        }
++    }
+     val shown = settingSections.filter { entry -> (section == null || entry.title == section) &&
+         filter.trim().split(Regex("\\s+")).all { (entry.title + " " + entry.keywords).contains(it, true) } }
+-    LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+-        if (section == null && filter.isBlank()) {
+-            items(settingSections.chunked(2)) { pair ->
+-                Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+-                    pair.forEach { item ->
+-                        Column(Modifier.weight(1f).height(135.dp).clip(RoundedCornerShape(18.dp)).background(Panel)
+-                            .clickable { section = item.title }.padding(20.dp), verticalArrangement = Arrangement.SpaceBetween) {
+-                            Icon(item.icon, null, Modifier.size(30.dp), tint = if (item.title == "Оформление") LocalMatte.current.accent else Ink)
+-                            Text(item.title, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium)
+-                        }
+-                    }
+-                }
+-            }
+-        } else {
+-            items(shown) { entry ->
+-                Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Panel).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
++    key(section, filter) {
++    ScrollList(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
++            items(shown, key = { it.title }) { entry ->
++                Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Chip).border(1.dp, Color(0xFF292929), RoundedCornerShape(12.dp)).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                     Text(entry.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                     when (entry.title) {
+                         "Оформление" -> {
+                             SettingToggle("Цвет из обложки", s.prefs.artworkColor) { s.settings(s.prefs.copy(artworkColor = it)) }
++                            Text("Шапка и треки используют оттенок открытой коллекции, а не другой играющей песни.", color = Muted, fontSize = 12.sp)
++                            HorizontalDivider(color = Color(0xFF303030))
++                            SettingToggle("Панорамные шапки исполнителей", s.appearance.panoramicArtists) { s.appearance(s.appearance.copy(panoramicArtists = it)) }
++                            Text("Широкое фото заполняет шапку. Для квадратного портрета — мягкое окружение без растягивания лица. Выключи, чтобы вернуть портрет.", color = Muted, fontSize = 12.sp)
++                            SettingToggle("Движение обложки при прокрутке", s.appearance.motion) { s.appearance(s.appearance.copy(motion = it)) }
++                            Text("Выключено: без параллакса и анимации смены оттенка шапки; затемнение всё ещё связано с прокруткой.", color = Muted, fontSize = 12.sp)
++                            HorizontalDivider(color = Color(0xFF303030))
++                            SettingToggle("Системная рамка окна", s.appearance.nativeFrame) { s.appearance(s.appearance.copy(nativeFrame = it)) }
++                            Text("После перезапуска. Выключено — чёрная рамка Zizi. Включено — стандартная рамка и поведение окон Windows; её цвет определяет система.", color = Muted, fontSize = 12.sp)
+                             Row(Modifier.fillMaxWidth().height(86.dp).clip(RoundedCornerShape(14.dp)).background(LocalMatte.current.card).padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
+                                 Icon(ZiziIcons.Palette, null, tint = LocalMatte.current.accent)
+                                 Spacer(Modifier.width(16.dp)); Text("Матовый AMOLED", color = Ink)
+@@ -846,6 +930,8 @@
+                             FilledTonalButton(onClick = effects) { Icon(ZiziIcons.Equalizer, null); Spacer(Modifier.width(10.dp)); Text("Открыть эквалайзер") }
+                             Text("Громкость · ${(s.gain * 100).toInt()}%")
+                             Slider(s.gain, s::volume)
++                            OutlinedButton(onClick = devices) { Icon(ZiziIcons.Headphones, null); Spacer(Modifier.width(10.dp)); Text("Устройства вывода") }
++                            TextButton(onClick = s::systemSoundSettings) { Text("Настройки звука Windows") }
+                         }
+                         "Загрузки" -> {
+                             Text("${s.downloadStats.first} треков · ${s.downloadStats.second / (1024 * 1024)} МБ", color = Muted)
+@@ -869,14 +955,20 @@
+                             TextButton(onClick = { confirmHistory = true }, enabled = s.recentSearches.isNotEmpty()) { Text("Очистить историю поиска") }
+                         }
+                         "О приложении" -> {
+-                            Text("ZiziPlayer Desktop 0.3.4 preview")
++                            Text("ZiziPlayer Desktop 0.3.5 preview")
+                             TextButton(onClick = { s.showDataFolder() }) { Text("Открыть папку данных") }
+                             TextButton(onClick = { diagnostics = true }) { Text("Диагностика и аудиодекодер") }
+                         }
+                     }
+                 }
+             }
+-            if (shown.isEmpty()) item { Text("Настройка не найдена", color = Muted) }
++            if (shown.isEmpty()) item {
++                Column(Modifier.padding(20.dp)) {
++                    Text("Настройка не найдена", fontWeight = FontWeight.SemiBold)
++                    Text("Попробуй: обложка, движение, окно, наушники или папки.", color = Muted, modifier = Modifier.padding(top = 8.dp))
++                }
++            }
++            item { Spacer(Modifier.height(24.dp)) }
+         }
+     }
+     if (diagnostics) AudioToolsDialog(s) { diagnostics = false }
+@@ -1008,7 +1100,7 @@
+ }
+ 
+ /** Mobile refresh motion: 900 ms linear turn, 340 ms settling to the complete turn. */
+-@Composable private fun SearchRefresh(refreshing: Boolean, enabled: Boolean, onClick: () -> Unit) {
++@Composable private fun SearchRefresh(refreshing: Boolean, enabled: Boolean, label: String = "Повторить поиск", onClick: () -> Unit) {
+     val angle = remember { Animatable(0f) }
+     LaunchedEffect(refreshing) {
+         if (refreshing) {
+@@ -1021,9 +1113,9 @@
+             angle.snapTo(0f)
+         }
+     }
+-    IconButton(onClick = { if (!refreshing) onClick() }, enabled = enabled,
++    IconButton(onClick = onClick, enabled = enabled,
+         modifier = Modifier.size(42.dp).graphicsLayer { rotationZ = angle.value }) {
+-        Icon(ZiziIcons.Refresh, "Повторить поиск", tint = if (enabled) Brand else Muted, modifier = Modifier.size(23.dp))
++        Icon(ZiziIcons.Refresh, label, tint = if (enabled) Brand else Muted, modifier = Modifier.size(23.dp))
+     }
+ }
+ 
+@@ -1209,7 +1301,14 @@
+ @Composable private fun ScrollList(modifier: Modifier = Modifier, state: LazyListState = rememberLazyListState(),
+     verticalArrangement: Arrangement.Vertical = Arrangement.Top, reserveScrollbar: Boolean = true, content: LazyListScope.() -> Unit) {
+     Box(modifier) {
+-        LazyColumn(Modifier.fillMaxSize().padding(end = if (reserveScrollbar) 10.dp else 0.dp), state = state, verticalArrangement = verticalArrangement, content = content)
++        LazyColumn(Modifier.fillMaxSize().padding(end = if (reserveScrollbar) 10.dp else 0.dp).drawWithCache {
++            val edge = Brush.verticalGradient(listOf(Color.Black.copy(alpha = .32f), Color.Transparent), endY = 22.dp.toPx())
++            onDrawWithContent {
++                drawContent()
++                val strength = if (state.firstVisibleItemIndex > 0) 1f else (state.firstVisibleItemScrollOffset / 32.dp.toPx()).coerceIn(0f, 1f)
++                if (strength > 0f) drawRect(edge, size = Size(size.width, 22.dp.toPx()), alpha = strength)
++            }
++        }, state = state, verticalArrangement = verticalArrangement, content = content)
+         VerticalScrollbar(rememberScrollbarAdapter(state), Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(8.dp))
+     }
+ }
+@@ -1291,40 +1390,29 @@
+             .distinctBy { it.artist.lowercase() }.take(10)
+     }
+     val favorites = remember(s.tracks, s.library.favorites) { s.tracks.filter { it.id in s.library.favorites }.take(8) }
+-    val categories = remember { listOf("Фонк" to "phonk", "Бразильский фанк" to "funk brazilian", "Замедленные" to "slowed reverb",
+-        "Ускоренные" to "sped up", "Русский рэп" to "русский рэп", "Хип-хоп" to "hip hop", "Электроника" to "electronic music", "Рок" to "rock classics") }
+     BoxWithConstraints(modifier) {
+-        val columns = (maxWidth.value / 220f).toInt().coerceIn(2, 4)
++        val columns = (maxWidth.value / 260f).toInt().coerceIn(1, 5)
+         ScrollList(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+             if (seeds.isNotEmpty()) {
+-                item { Text("Открой больше музыки", fontSize = 24.sp, fontWeight = FontWeight.Bold) }
+-                item { Text("Исполнители из твоей медиатеки — отправная точка для поиска, не персональная выдача сервера.", color = Muted, fontSize = 13.sp) }
++                item { Text("Твои исполнители", fontSize = 24.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp)) }
+                 item {
+                     androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                         items(seeds, key = { it.artist.lowercase() }) { track ->
+-                            Column(Modifier.width(160.dp).clip(RoundedCornerShape(8.dp)).background(Chip).clickable { onQuery(track.artist) }.padding(12.dp)) {
++                            Column(Modifier.width(160.dp).clip(RoundedCornerShape(8.dp)).background(Chip).clickable { onArtist(track) }.padding(12.dp)) {
+                                 Artwork(track, s.client, 136.dp)
+                                 Spacer(Modifier.height(10.dp))
+                                 Text(track.artist, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+-                                Text("Найти в каталоге", color = Muted, fontSize = 12.sp)
+                             }
+                         }
+                     }
+                 }
+             }
+             item { Text("Жанры и настроение", fontSize = 24.sp, fontWeight = FontWeight.Bold) }
+-            items(categories.chunked(columns), key = { it.first().second }) { row ->
+-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+-                    row.forEach { (label, query) ->
+-                        val index = categories.indexOf(label to query)
+-                        val colors = listOf(0xFF873600, 0xFF8D1836, 0xFF4E237D, 0xFF204D73, 0xFF754224, 0xFF665600, 0xFF21564A, 0xFF6D3035)
+-                        Box(Modifier.weight(1f).aspectRatio(1.9f).clip(RoundedCornerShape(8.dp))
+-                            .background(Brush.linearGradient(listOf(Color(colors[index]), Panel)))
+-                            .clickable { onQuery(query) }.padding(18.dp)) {
+-                            Text(label, fontSize = 21.sp, fontWeight = FontWeight.Bold, maxLines = 2)
+-                            Icon(ZiziIcons.Search, null, Modifier.align(Alignment.BottomEnd).size(32.dp), tint = Ink.copy(alpha = .4f))
+-                        }
+-                    }
++            items(discoveryGenres.chunked(columns), key = { "genre:" + it.first().query }) { row ->
++                Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
++                    row.forEach { genre -> key(genre.query) {
++                        DiscoveryTile(s, genre, Modifier.weight(1f), onQuery)
++                    } }
+                     repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
+                 }
+             }
+@@ -1346,6 +1434,50 @@
+             }
+             item { Spacer(Modifier.height(20.dp)) }
+         }
++    }
++}
++
++/** Real album covers, lazily fetched and independently clickable. No stock image substitution. */
++@Composable private fun DiscoveryTile(s: DesktopUi, genre: DiscoveryGenre, modifier: Modifier, onQuery: (String) -> Unit) {
++    val albums by produceState<List<CatalogCollection>>(emptyList(), genre.query, s.discoveryEpoch, s.client) {
++        value = emptyList()
++        // Short debounce prevents a fast wheel fling from firing requests for every passing tile.
++        delay(180)
++        value = s.discovery.albums(genre.query)
++    }
++    val interaction = remember { MutableInteractionSource() }
++    val hovered by interaction.collectIsHoveredAsState()
++    val lift by androidx.compose.animation.core.animateFloatAsState(if (hovered && s.appearance.motion) -5f else 0f,
++        tween(if (s.appearance.motion) 160 else 0))
++    BoxWithConstraints(modifier.height(190.dp).clip(RoundedCornerShape(12.dp))
++        .background(Brush.linearGradient(listOf(Color(genre.color), shadeCollectionTone(Color(genre.color), .50f))))
++        .hoverable(interaction).clickable { onQuery(genre.query) }) {
++        val artSize = (maxWidth * .43f).coerceIn(90.dp, 130.dp)
++        if (albums.isEmpty()) {
++            // Honest unloaded/offline state: decorative record, not a made-up album cover.
++            Box(Modifier.align(Alignment.BottomEnd).offset(x = 18.dp, y = 24.dp).size(artSize).background(Color.Black.copy(alpha = .24f), CircleShape), contentAlignment = Alignment.Center) {
++                Box(Modifier.size(26.dp).background(Color(genre.color), CircleShape))
++            }
++        }
++        albums.asReversed().forEachIndexed { index, album ->
++            val front = index == albums.lastIndex
++            val data = coverData(album.artworkTrack(), s.client)
++            Box(Modifier.align(Alignment.BottomEnd).offset(x = if (front) 6.dp else (-42).dp, y = if (front) 22.dp else 12.dp)
++                .size(artSize).graphicsLayer {
++                    rotationZ = if (front) 14f else -9f
++                    translationY = lift.dp.toPx()
++                    shadowElevation = 14.dp.toPx()
++                    shape = RoundedCornerShape(6.dp)
++                    clip = true
++                }.background(Chip).clickable { s.open(album) }) {
++                if (data != null) Image(data.image, "Открыть альбом ${album.title}", Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
++                else Icon(ZiziIcons.Queue, "Открыть альбом ${album.title}", Modifier.align(Alignment.Center).size(30.dp), tint = Muted)
++            }
++        }
++        // Title has its own dark backing, above the rotated artwork layer.
++        Box(Modifier.fillMaxWidth().height(90.dp).background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = .30f), Color.Transparent))))
++        Text(genre.title, fontSize = 24.sp, lineHeight = 27.sp, fontWeight = FontWeight.Bold, color = Ink,
++            maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(20.dp).fillMaxWidth(.85f))
+     }
+ }
+ 
+@@ -1399,22 +1531,70 @@
+     }
+ }
+ 
+-@Composable private fun collectionBackground(track: PlayerTrack?, s: DesktopUi, state: LazyListState): Modifier {
+-    val cover = coverData(track, s.client)
+-    val tone = animatedCollectionTone(if (s.prefs.artworkColor) collectionTone(cover?.primary) else Color(0xFF424242))
++private fun collectionHeroHeight(width: Float, panoramic: Boolean): Float =
++    if (panoramic) { if (width < 680f) 340f else 420f } else DesktopLayout.heroHeight(width)
++
++/** Same viewport for artist, album, playlist, favorites, local library and downloads.
++ * Background is a sibling behind the lazy list, not a bitmap inside the scrolling header.
++ */
++@Composable private fun CollectionViewport(track: PlayerTrack?, s: DesktopUi, state: LazyListState,
++    artist: Boolean, modifier: Modifier, content: LazyListScope.() -> Unit) {
++    Box(modifier.then(collectionBackground(track, s, state, artist))) {
++        ScrollList(Modifier.fillMaxSize(), state = state, reserveScrollbar = false, content = content)
++    }
++}
++
++@Composable private fun collectionBackground(track: PlayerTrack?, s: DesktopUi, state: LazyListState, artist: Boolean): Modifier {
++    val cover = coverData(track, s.client, hero = true)
++    val target = if (s.prefs.artworkColor) collectionTone(cover?.primary) else Color(0xFF424242)
++    val tone = animatedCollectionTone(target, motion = s.appearance.motion)
++    val panoramic = artist && s.appearance.panoramicArtists
++    val motion = s.appearance.motion
+     return Modifier.clipToBounds().drawWithCache {
+-        val hero = DesktopLayout.heroHeight(size.width / density).dp.toPx()
++        val hero = collectionHeroHeight(size.width / density, panoramic).dp.toPx()
+         val end = hero + 244.dp.toPx()
++        val landing = shadeCollectionTone(tone, .62f)
++        // No adjacent 1dp discontinuity: all bands meet at exactly the same colour.
+         val brush = Brush.verticalGradient(
+-            0f to tone, (hero / end) to shadeCollectionTone(tone, .62f),
+-            ((hero + 1.dp.toPx()) / end) to shadeCollectionTone(tone, .44f),
+-            ((hero + 150.dp.toPx()) / end) to shadeCollectionTone(tone, .12f), 1f to Panel,
++            0f to tone, (hero / end) to landing,
++            ((hero + 120.dp.toPx()) / end) to shadeCollectionTone(tone, .19f), 1f to Panel,
+             startY = 0f, endY = end)
++        val image = if (panoramic) cover?.banner else null
++        val leftScrim = Brush.horizontalGradient(listOf(Color.Black.copy(alpha = .55f), Color.Transparent))
++        val bottomScrim = Brush.verticalGradient(0f to Color.Black.copy(alpha = .16f), .55f to Color.Black.copy(alpha = .25f),
++            1f to Color.Black.copy(alpha = .72f), endY = hero)
+         onDrawBehind {
+             drawRect(Panel)
+-            // Reads in draw phase: scrolling does not recompose/redecode the page.
+-            if (state.firstVisibleItemIndex == 0) translate(top = -state.firstVisibleItemScrollOffset.toFloat()) {
+-                drawRect(brush, size = Size(size.width, end))
++            // Draw-phase state reads. Fades reach zero BEFORE item 0 can be disposed:
++            // firstVisibleItemIndex switching can no longer pop a remaining gradient tail.
++            val scroll = if (state.firstVisibleItemIndex == 0) state.firstVisibleItemScrollOffset.toFloat() else end
++            val visibility = HeroMotion.visibility(scroll, hero)
++            if (visibility > 0f) {
++                translate(top = -scroll) { drawRect(brush, size = Size(size.width, end), alpha = visibility) }
++                if (image != null) {
++                    val visibleHeight = (hero - scroll).coerceAtLeast(0f)
++                    clipRect(bottom = visibleHeight) {
++                        val scale = maxOf(size.width / image.width, hero / image.height)
++                        val cropWidth = (size.width / scale).roundToInt().coerceIn(1, image.width)
++                        val cropHeight = (hero / scale).roundToInt().coerceIn(1, image.height)
++                        // Top-biased crop preserves heads; no vertical centre-cropping of portraits.
++                        val sourceX = ((image.width - cropWidth) * .55f).roundToInt()
++                        translate(top = HeroMotion.travel(scroll, motion)) {
++                            drawImage(image, srcOffset = IntOffset(sourceX, 0), srcSize = IntSize(cropWidth, cropHeight),
++                                dstSize = IntSize(size.width.roundToInt().coerceAtLeast(1), hero.roundToInt().coerceAtLeast(1)),
++                                alpha = visibility, filterQuality = FilterQuality.High)
++                        }
++                        translate(top = -scroll) {
++                            drawRect(leftScrim, size = Size(size.width, hero), alpha = visibility)
++                            drawRect(bottomScrim, size = Size(size.width, hero), alpha = visibility)
++                            // The seam matches the ALREADY faded tail, not the unfaded tone.
++                            // Drawing every overlay with visibility would leave a bright 1px edge.
++                            val seam = Brush.verticalGradient(0f to Color.Transparent,
++                                1f to shadeCollectionTone(tone, .62f * visibility), startY = hero - 48.dp.toPx(), endY = hero)
++                            drawRect(seam, size = Size(size.width, hero))
++                        }
++                    }
++                }
+             }
+         }
+     }
+--- a/src/main/kotlin/app/ziziplayer/desktop/ui/DesktopUi.kt
++++ b/src/main/kotlin/app/ziziplayer/desktop/ui/DesktopUi.kt
+@@ -12,6 +12,19 @@
+ import javax.swing.JFileChooser
+ 
+ internal class DesktopUi(val scope: CoroutineScope, val store: LibraryStore, initial: LibrarySnapshot) {
++    var appearance by mutableStateOf(DesktopAppearance.load()); private set
++    fun appearance(value: DesktopAppearance) {
++        appearance = value
++        appearanceWrites.trySend(value)
++    }
++    private val appearanceWrites = Channel<DesktopAppearance>(Channel.CONFLATED)
++    private val appearanceWriter = scope.launch(Dispatchers.IO) {
++        for (value in appearanceWrites) {
++            if (runCatching { value.save() }.isFailure) withContext(Dispatchers.Main) {
++                notice = "Не удалось сохранить оформление. Настройки действуют в этом сеансе."
++            }
++        }
++    }
+     val outputs = AudioOutputs()
+     val player = DesktopPlayer(scope, sinkFactory = outputs::createSink)
+     val offline = OfflineFiles(store.directory.resolve("downloads"))
+@@ -42,6 +55,11 @@
+     var httpCompatibility by mutableStateOf(false); private set
+     var recentSearches by mutableStateOf(DesktopPreferences.recentSearches); private set
+     var ffmpeg by mutableStateOf(DesktopPreferences.ffmpeg.ifBlank { player.ffmpeg })
++    val discovery = DiscoveryArtwork(lookup = { query ->
++        client?.let { api -> runInterruptible(Dispatchers.IO) { api.browse(query, "album").items } }.orEmpty()
++    })
++    var discoveryEpoch by mutableStateOf(0); private set
++    fun refreshDiscovery() { discovery.clear(); discoveryEpoch++ }
+     private val previews = SearchPreview(scope, lookup = { query ->
+         val api = client
+         if (api == null) null else runInterruptible(Dispatchers.IO) { api.search(query) }
+@@ -127,6 +145,7 @@
+             val ack = CompletableDeferred<Boolean>()
+             if (store.writable) { writes.send(Write(final, ack)); if (!ack.await()) { shuttingDown = false; failed(); return@launch } }
+             writes.close(); writer.join()
++            appearanceWrites.close(); appearanceWriter.join()
+             player.close(done)
+         }
+     }
+--- /dev/null
++++ b/src/main/kotlin/app/ziziplayer/desktop/ui/DiscoveryArtwork.kt
+@@ -0,0 +1,88 @@
++package app.ziziplayer.desktop.ui
++
++import androidx.compose.runtime.getValue
++import androidx.compose.runtime.mutableStateOf
++import androidx.compose.runtime.setValue
++import app.ziziplayer.desktop.network.CatalogCollection
++import kotlinx.coroutines.CancellationException
++import kotlinx.coroutines.currentCoroutineContext
++import kotlinx.coroutines.ensureActive
++import kotlinx.coroutines.sync.Mutex
++import kotlinx.coroutines.sync.Semaphore
++import kotlinx.coroutines.sync.withLock
++import kotlinx.coroutines.sync.withPermit
++import java.util.Locale
++
++internal data class DiscoveryGenre(val title: String, val query: String, val color: Long)
++internal val discoveryGenres = listOf(
++    DiscoveryGenre("Фонк", "phonk", 0xFF85411D),
++    DiscoveryGenre("Бразильский фанк", "brazilian funk", 0xFF8C2549),
++    DiscoveryGenre("Замедленные", "slowed reverb", 0xFF583277),
++    DiscoveryGenre("Ускоренные", "sped up", 0xFF225878),
++    DiscoveryGenre("Русский рэп", "русский рэп", 0xFF82472B),
++    DiscoveryGenre("Хип-хоп", "hip hop", 0xFF716121),
++    DiscoveryGenre("Электроника", "electronic", 0xFF266557),
++    DiscoveryGenre("Рок", "rock", 0xFF863940),
++    DiscoveryGenre("Поп", "pop", 0xFF8C3268),
++    DiscoveryGenre("Инди", "indie", 0xFF495A85),
++    DiscoveryGenre("Техно", "techno", 0xFF594282),
++    DiscoveryGenre("Хаус", "house", 0xFF207078),
++    DiscoveryGenre("Драм-н-бейс", "drum and bass", 0xFF645C2A),
++    DiscoveryGenre("Трэп", "trap", 0xFF653F65),
++    DiscoveryGenre("R&B и соул", "rnb soul", 0xFF79472F),
++    DiscoveryGenre("Джаз", "jazz", 0xFF285C71),
++    DiscoveryGenre("Lo-fi", "lofi", 0xFF5B5379),
++    DiscoveryGenre("Эмбиент", "ambient", 0xFF3C6370),
++    DiscoveryGenre("Для тренировки", "workout", 0xFF8B392C),
++    DiscoveryGenre("Для концентрации", "focus", 0xFF426151),
++    DiscoveryGenre("Классика", "classical", 0xFF735635),
++    DiscoveryGenre("Саундтреки", "soundtrack", 0xFF495283),
++    DiscoveryGenre("Метал", "metal", 0xFF633B47),
++    DiscoveryGenre("K-pop", "k pop", 0xFF864569)
++)
++
++/** Real album search through the existing catalog, not a pretend recommendation endpoint.
++ * At most two requests, visible lazy tiles only, bounded cache and error backoff.
++ */
++internal class DiscoveryArtwork(
++    private val lookup: suspend (String) -> List<CatalogCollection>,
++    private val now: () -> Long = System::currentTimeMillis
++) {
++    private data class Entry(val albums: List<CatalogCollection>, val expires: Long)
++    private val lock = Any()
++    private val cache = LinkedHashMap<String, Entry>(48, .75f, true)
++    private val queryLocks = Array(16) { Mutex() }
++    private val gate = Semaphore(2)
++    private var generation = 0L
++    var active by mutableStateOf(0); private set
++    fun clear() = synchronized(lock) { generation++; cache.clear() }
++    private fun cached(query: String): List<CatalogCollection>? = synchronized(lock) {
++        cache[query]?.takeIf { it.expires > now() }?.albums
++    }
++    suspend fun albums(raw: String): List<CatalogCollection> {
++        val query = raw.trim().lowercase(Locale.ROOT)
++        require(query.length in 2..300)
++        cached(query)?.let { return it }
++        return queryLocks[(query.hashCode() and Int.MAX_VALUE) % queryLocks.size].withLock {
++            cached(query)?.let { return@withLock it }
++            gate.withPermit {
++                val token = synchronized(lock) { generation }
++                active++
++                try {
++                    val found = try {
++                        lookup(query).filter { it.kind == "album" && !it.artworkUrl.isNullOrBlank() }.distinctBy { it.key }.take(2)
++                    } catch (e: CancellationException) { throw e }
++                    catch (_: Exception) { emptyList() }
++                    currentCoroutineContext().ensureActive()
++                    synchronized(lock) {
++                        if (token == generation) {
++                            cache[query] = Entry(found, now() + if (found.isEmpty()) 60_000L else 600_000L)
++                            while (cache.size > 48) { val i = cache.entries.iterator(); i.next(); i.remove() }
++                        }
++                    }
++                    found
++                } finally { active-- }
++            }
++        }
++    }
++}
+--- /dev/null
++++ b/src/main/kotlin/app/ziziplayer/desktop/ui/HeroArtwork.kt
+@@ -0,0 +1,58 @@
++package app.ziziplayer.desktop.ui
++
++import java.awt.AlphaComposite
++import java.awt.Color
++import java.awt.GradientPaint
++import java.awt.RenderingHints
++import java.awt.image.BufferedImage
++import kotlin.math.min
++import kotlin.math.roundToInt
++
++/** IO-only preparation. A small portrait is never cropped into an enormous face.
++ * Wide sources stay wide; square/portrait sources get a soft photographic surround.
++ * These are existing source pixels, not a fabricated artist banner or AI upscaling.
++ */
++internal fun prepareHeroArtwork(source: BufferedImage): BufferedImage {
++    if (source.width.toFloat() / source.height >= 1.8f && source.width >= 1000) return source
++    val width = 1440; val height = 560
++    val result = BufferedImage(width, height, BufferedImage.TYPE_INT_RGB)
++    val g = result.createGraphics()
++    try {
++        g.color = Color(16, 16, 16); g.fillRect(0, 0, width, height)
++        // Strong low-pass background, prepared once, never blurred per animation frame.
++        val tiny = BufferedImage(24, 10, BufferedImage.TYPE_INT_RGB)
++        tiny.createGraphics().let { small ->
++            try { small.drawImage(source, 0, 0, 24, 10, null) } finally { small.dispose() }
++        }
++        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC)
++        g.drawImage(tiny, 0, 0, width, height, null)
++        g.color = Color(0, 0, 0, 65); g.fillRect(0, 0, width, height)
++        // Fit the entire portrait, with a strict 1.25x enlargement ceiling.
++        val scale = min(height.toDouble() / source.height, min(width * .60 / source.width, 1.25))
++        val w = (source.width * scale).roundToInt().coerceAtLeast(1)
++        val h = (source.height * scale).roundToInt().coerceAtLeast(1)
++        val portrait = BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB)
++        portrait.createGraphics().let { p ->
++            try {
++                p.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC)
++                p.drawImage(source, 0, 0, w, h, null)
++                p.composite = AlphaComposite.DstIn
++                val fade = (w * .14f).coerceAtLeast(1f)
++                p.paint = GradientPaint(0f, 0f, Color(0, 0, 0, 0), fade, 0f, Color.BLACK)
++                p.fillRect(0, 0, fade.toInt() + 1, h)
++                p.paint = GradientPaint(w - fade, 0f, Color.BLACK, w.toFloat(), 0f, Color(0, 0, 0, 0))
++                p.fillRect((w - fade).toInt(), 0, fade.toInt() + 1, h)
++                // Small sources also dissolve at the top/bottom, not a floating hard rectangle.
++                if (h < height) {
++                    val fy = (h * .12f).coerceAtLeast(1f)
++                    p.paint = GradientPaint(0f, 0f, Color(0, 0, 0, 0), 0f, fy, Color.BLACK)
++                    p.fillRect(0, 0, w, fy.toInt() + 1)
++                    p.paint = GradientPaint(0f, h - fy, Color.BLACK, 0f, h.toFloat(), Color(0, 0, 0, 0))
++                    p.fillRect(0, (h - fy).toInt(), w, fy.toInt() + 1)
++                }
++            } finally { p.dispose() }
++        }
++        g.drawImage(portrait, (width * .62 - w / 2.0).roundToInt(), (height - h) / 2, null)
++    } finally { g.dispose() }
++    return result
++}
+--- /dev/null
++++ b/src/main/kotlin/app/ziziplayer/desktop/ui/WindowChrome.kt
+@@ -0,0 +1,48 @@
++package app.ziziplayer.desktop.ui
++
++import androidx.compose.foundation.Canvas
++import androidx.compose.foundation.background
++import androidx.compose.foundation.clickable
++import androidx.compose.foundation.hoverable
++import androidx.compose.foundation.interaction.MutableInteractionSource
++import androidx.compose.foundation.interaction.collectIsHoveredAsState
++import androidx.compose.foundation.layout.*
++import androidx.compose.runtime.*
++import androidx.compose.ui.Alignment
++import androidx.compose.ui.Modifier
++import androidx.compose.ui.geometry.Offset
++import androidx.compose.ui.geometry.Size
++import androidx.compose.ui.graphics.Color
++import androidx.compose.ui.graphics.drawscope.Stroke
++import androidx.compose.ui.semantics.Role
++import androidx.compose.ui.semantics.contentDescription
++import androidx.compose.ui.semantics.semantics
++import androidx.compose.ui.unit.dp
++
++/** No icon font dependency. Native close/Alt+F4 and caption close share the flush/shutdown path. */
++@Composable internal fun WindowCaptionButton(label: String, glyph: Int, onClick: () -> Unit) {
++    val interaction = remember { MutableInteractionSource() }
++    val hovered by interaction.collectIsHoveredAsState()
++    Box(Modifier.width(46.dp).fillMaxHeight()
++        .background(if (hovered) { if (glyph == 3) Color(0xFFC42B1C) else Color(0xFF242424) } else Color.Black)
++        .hoverable(interaction).semantics { contentDescription = label }
++        .clickable(interactionSource = interaction, indication = null, role = Role.Button, onClick = onClick),
++        contentAlignment = Alignment.Center) {
++        Canvas(Modifier.size(12.dp)) {
++            val ink = Color(0xFFF6F7F8); val stroke = 1.dp.toPx()
++            when (glyph) {
++                0 -> drawLine(ink, Offset(1.dp.toPx(), size.height / 2), Offset(size.width - 1.dp.toPx(), size.height / 2), stroke)
++                1 -> drawRect(ink, Offset(stroke, stroke), Size(size.width - 2 * stroke, size.height - 2 * stroke), style = Stroke(stroke))
++                2 -> {
++                    drawRect(ink, Offset(3 * stroke, stroke), Size(size.width - 4 * stroke, size.height - 4 * stroke), style = Stroke(stroke))
++                    drawRect(if (hovered) Color(0xFF242424) else Color.Black, Offset(stroke, 3 * stroke), Size(size.width - 4 * stroke, size.height - 4 * stroke))
++                    drawRect(ink, Offset(stroke, 3 * stroke), Size(size.width - 4 * stroke, size.height - 4 * stroke), style = Stroke(stroke))
++                }
++                else -> {
++                    drawLine(ink, Offset(stroke, stroke), Offset(size.width - stroke, size.height - stroke), stroke)
++                    drawLine(ink, Offset(size.width - stroke, stroke), Offset(stroke, size.height - stroke), stroke)
++                }
++            }
++        }
++    }
++}
+--- /dev/null
++++ b/src/test/kotlin/app/ziziplayer/desktop/DesktopHeroTest.kt
+@@ -0,0 +1,94 @@
++package app.ziziplayer.desktop
++
++import app.ziziplayer.desktop.ui.*
++import java.awt.Color
++import java.awt.image.BufferedImage
++import org.junit.Assert.*
++import org.junit.Test
++
++class DesktopHeroTest {
++    @Test fun scrollHasExactEndpoints() {
++        assertEquals(1f, HeroMotion.visibility(0f, 420f), 0f)
++        assertEquals(0f, HeroMotion.visibility(420f, 420f), 0f)
++        assertEquals(0f, HeroMotion.visibility(10000f, 420f), 0f)
++    }
++    @Test fun negativeAndEmptyInputsAreBounded() {
++        assertEquals(1f, HeroMotion.visibility(-10f, 420f), 0f)
++        for (h in listOf(0f, -1f, 1f, 252f, 340f, 420f)) for (s in 0..1000) {
++            val value = HeroMotion.visibility(s.toFloat(), h)
++            assertTrue(value.isFinite() && value in 0f..1f)
++        }
++    }
++    @Test fun fadeIsMonotonicForEverySupportedHeight() {
++        for (h in listOf(252f, 316f, 340f, 420f)) {
++            var previous = 1f
++            for (s in 0..1000) {
++                val value = HeroMotion.visibility(s.toFloat(), h)
++                assertTrue(value <= previous)
++                assertTrue(previous - value < .007f)
++                previous = value
++            }
++        }
++    }
++    @Test fun reverseScrollRetracesSameCurveWithoutHysteresis() {
++        val forward = (0..420).map { HeroMotion.visibility(it.toFloat(), 420f) }
++        val backward = (420 downTo 0).map { HeroMotion.visibility(it.toFloat(), 420f) }.reversed()
++        assertEquals(forward, backward)
++    }
++    @Test fun lazyHeaderDisposalCannotDropAVisibleTail() {
++        for (h in listOf(252f, 316f, 340f, 420f)) {
++            // First item includes at least hero plus actions; by its disposal alpha is already 0.
++            assertEquals(0f, HeroMotion.visibility(h + 104f, h), 0f)
++            assertEquals(0f, HeroMotion.visibility(h + 244f, h), 0f)
++        }
++    }
++    @Test fun parallaxMovesSlowerThanText() {
++        assertEquals(-28f, HeroMotion.travel(100f, true), .001f)
++        assertEquals(-100f, HeroMotion.travel(100f, false), .001f)
++        assertEquals(0f, HeroMotion.travel(-10f, true), 0f)
++    }
++    @Test fun motionHasGentleEndpoints() {
++        assertTrue(HeroMotion.smooth(.001f) < .00001f)
++        assertTrue(1f - HeroMotion.smooth(.999f) < .00001f)
++    }
++    @Test fun defaultsUsePanoramaAndBlackCaption() {
++        val p = DesktopAppearance()
++        assertTrue(p.panoramicArtists); assertTrue(p.motion); assertFalse(p.nativeFrame)
++        assertTrue(p.copy(nativeFrame = true).nativeFrame)
++        assertFalse(p.copy(motion = false).motion)
++    }
++    private fun solid(w: Int, h: Int, color: Color): BufferedImage {
++        val image = BufferedImage(w, h, BufferedImage.TYPE_INT_RGB)
++        val g = image.createGraphics()
++        try { g.color = color; g.fillRect(0, 0, w, h) } finally { g.dispose() }
++        return image
++    }
++    @Test fun realWidePhotoIsNotRecomposed() {
++        val wide = solid(1440, 560, Color.BLUE)
++        assertSame(wide, prepareHeroArtwork(wide))
++    }
++    @Test fun squarePortraitBecomesOpaquePanorama() {
++        val result = prepareHeroArtwork(solid(1000, 1000, Color.RED))
++        assertEquals(1440, result.width); assertEquals(560, result.height)
++        assertFalse(result.colorModel.hasAlpha())
++        assertEquals(Color.RED.rgb, result.getRGB(893, 280))
++    }
++    @Test fun tinySourceDoesNotFillEntireHeaderWithUpscaledPixels() {
++        val result = prepareHeroArtwork(solid(64, 64, Color.RED))
++        assertEquals(Color.RED.rgb, result.getRGB(893, 280))
++        assertNotEquals(Color.RED.rgb, result.getRGB(893, 120))
++        assertNotEquals(Color.RED.rgb, result.getRGB(80, 280))
++    }
++    @Test fun preparationDoesNotMutateSource() {
++        val source = solid(240, 320, Color.GREEN)
++        val before = source.getRGB(0, 0, 240, 320, null, 0, 240)
++        prepareHeroArtwork(source)
++        assertArrayEquals(before, source.getRGB(0, 0, 240, 320, null, 0, 240))
++    }
++    @Test fun veryNarrowSourcesRemainValid() {
++        for ((w, h) in listOf(1 to 1, 1 to 1000, 1000 to 1, 32 to 320)) {
++            val result = prepareHeroArtwork(solid(w, h, Color.GRAY))
++            assertTrue(result.width > 0 && result.height > 0)
++        }
++    }
++}
+--- /dev/null
++++ b/src/test/kotlin/app/ziziplayer/desktop/DiscoveryArtworkTest.kt
+@@ -0,0 +1,77 @@
++package app.ziziplayer.desktop
++
++import app.ziziplayer.desktop.network.CatalogCollection
++import app.ziziplayer.desktop.ui.DiscoveryArtwork
++import app.ziziplayer.desktop.ui.discoveryGenres
++import kotlinx.coroutines.*
++import org.junit.Assert.*
++import org.junit.Test
++
++class DiscoveryArtworkTest {
++    private fun album(id: Int) = CatalogCollection("$id", "album", "Album $id", artworkUrl = "https://example.org/$id.jpg")
++    @Test fun genresHaveUniqueQueriesAndRealSearchInputs() {
++        assertEquals(24, discoveryGenres.size)
++        assertEquals(24, discoveryGenres.distinctBy { it.query }.size)
++        assertTrue(discoveryGenres.all { it.query.length in 2..300 && it.title.isNotBlank() })
++    }
++    @Test fun resultsAreRealDeduplicatedAlbumsWithArtwork() = runBlocking {
++        val cache = DiscoveryArtwork(lookup = { listOf(album(1), album(1), album(2), album(3), CatalogCollection("4", "artist", "Artist")) })
++        assertEquals(listOf(album(1), album(2)), cache.albums("phonk"))
++        assertEquals(0, cache.active)
++    }
++    @Test fun overlappingTilesCoalesceSameQuery() = runBlocking {
++        var calls = 0
++        val cache = DiscoveryArtwork(lookup = { calls++; delay(10); listOf(album(1)) })
++        List(10) { async { cache.albums("PHONK") } }.awaitAll()
++        assertEquals(1, calls)
++    }
++    @Test fun noMoreThanTwoAlbumRequestsAtOnce() = runBlocking {
++        var inFlight = 0; var max = 0
++        val cache = DiscoveryArtwork(lookup = {
++            inFlight++; max = maxOf(max, inFlight)
++            try { delay(10); listOf(album(1)) } finally { inFlight-- }
++        })
++        List(24) { async { cache.albums("genre-$it") } }.awaitAll()
++        assertTrue(max <= 2); assertEquals(0, cache.active)
++    }
++    @Test fun refreshReallyInvalidatesCachedArtwork() = runBlocking {
++        var calls = 0
++        val cache = DiscoveryArtwork(lookup = { calls++; listOf(album(calls)) })
++        assertEquals("1", cache.albums("phonk").first().id)
++        assertEquals("1", cache.albums("phonk").first().id)
++        cache.clear()
++        assertEquals("2", cache.albums("phonk").first().id)
++    }
++    @Test fun failedCategoryHasBackoffAndDoesNotThrow() = runBlocking {
++        var calls = 0; var clock = 0L
++        val cache = DiscoveryArtwork(lookup = { calls++; throw IllegalStateException("offline") }, now = { clock })
++        assertTrue(cache.albums("phonk").isEmpty()); cache.albums("phonk")
++        assertEquals(1, calls)
++        clock = 60_001; cache.albums("phonk"); assertEquals(2, calls)
++    }
++    @Test fun successfulCoversExpireAfterTenMinutes() = runBlocking {
++        var clock = 0L; var calls = 0
++        val cache = DiscoveryArtwork(lookup = { calls++; listOf(album(1)) }, now = { clock })
++        cache.albums("phonk"); clock = 599_999; cache.albums("phonk"); assertEquals(1, calls)
++        clock = 600_001; cache.albums("phonk"); assertEquals(2, calls)
++    }
++    @Test fun cancelledLookupIsNotCachedAsEmpty() = runBlocking {
++        var cancel = true; var calls = 0
++        val cache = DiscoveryArtwork(lookup = { calls++; if (cancel) throw CancellationException("left page"); listOf(album(1)) })
++        try { cache.albums("phonk"); fail("Cancellation swallowed") } catch (_: CancellationException) { }
++        cancel = false
++        assertEquals(listOf(album(1)), cache.albums("phonk")); assertEquals(2, calls); assertEquals(0, cache.active)
++    }
++    @Test fun staleInFlightResponseDoesNotRepopulateAfterRefresh() = runBlocking {
++        val started = CompletableDeferred<Unit>(); val release = CompletableDeferred<Unit>(); var calls = 0
++        val cache = DiscoveryArtwork(lookup = {
++            calls++
++            if (calls == 1) { started.complete(Unit); release.await() }
++            listOf(album(calls))
++        })
++        val pending = async { cache.albums("phonk") }
++        withTimeout(3000) { started.await() }
++        cache.clear(); release.complete(Unit); pending.await()
++        assertEquals("2", cache.albums("phonk").first().id)
++    }
++}
+--- a/tools/check_desktop_source.py
++++ b/tools/check_desktop_source.py
+@@ -46,10 +46,10 @@
+         'transport brand orange independent of cover': 'primary = Brand' in ui and '0xFFF97316' in slider and 'ThinSlider(value = drag' in ui,
+         'one exclusive right dock': 'mutableStateOf(DesktopDock.NONE)' in ui and 'when (dock)' in ui and 'NONE, QUEUE, EFFECTS, DEVICES' in dock and 'AnimatedVisibility' not in ui,
+         'library collapse and full hide': 'sidebarMode = lastVisibleSidebar' in ui and 'sidebarMode = if (sidebarMode == 2) 1 else 2' in ui,
+-        'page header continuous through actions': 'actions: @Composable () -> Unit' in ui and 'collectionBackground(remote.collection.artworkTrack()' in ui and 'hero + 244.dp.toPx()' in ui and 'if (collapsed) Panel else Color.Transparent' in ui,
++        'page header continuous through actions': 'actions: @Composable () -> Unit' in ui and 'CollectionViewport(remote.collection.artworkTrack()' in ui and 'hero + 244.dp.toPx()' in ui and 'if (collapsed) Panel else Color.Transparent' in ui,
+         'page header honors artwork preference': 'if (s.prefs.artworkColor) collectionTone(cover?.primary)' in ui,
+         'header hue and contrast bounded': 'lch[0].coerceIn(.36f, .50f)' in palette and '(lch[1] * 1.18f).coerceAtMost(.22f)' in palette,
+-        'artwork reload includes URL': 'null, track?.id, track?.artwork, track?.artworkUrl, api)' in ui,
++        'artwork reload includes URL': 'null, track?.id, track?.artwork, track?.artworkUrl, api, hero)' in ui,
+         'bounded locks coalesce cover misses': 'loadLocks = Array(32)' in ui and 'synchronized(loadLocks[' in ui,
+         'transport seek validates identity and generation': 'progress.trackId == state.track?.id && progress.generation == state.generation' in ui,
+         'sticky collection header and dense rows': 'stickyHeader { TrackTableHeader' in ui and 'Artwork(track, s.client, 40.dp)' in ui,
+@@ -78,6 +78,43 @@
+         'discovery is grounded in library': 'distinctBy { it.artist.lowercase() }' in ui and 'SearchHub(s' in ui,
+         'catalog durations parsed in seconds': 'row.optLong("dur", 0)' in network and '?.times(1000)' in network,
+     })
++    appearance = read(prefix + 'desktop/ui/DesktopAppearance.kt')
++    hero = read(prefix + 'desktop/ui/HeroArtwork.kt')
++    chrome = read(prefix + 'desktop/ui/WindowChrome.kt')
++    checks.update({
++        'shared lazy viewport for local and catalog pages': ui.count('CollectionViewport(') == 3 and 'state = state, reserveScrollbar = false' in ui,
++        'hero background belongs to viewport not lazy header': 'Box(modifier.then(collectionBackground(track, s, state, artist)))' in ui,
++        'scroll reads occur inside draw callback': 'val scroll = if (state.firstVisibleItemIndex == 0)' in ui and 'HeroMotion.visibility(scroll, hero)' in ui,
++        'tail vanishes continuously before lazy disposal': '1f - smooth(progress(scroll, height))' in appearance and 't * t * (3f - 2f * t)' in appearance,
++        'parallax and reduced motion share exact scroll input': 'HeroMotion.travel(scroll, motion)' in ui and 'if (motion) .28f else 1f' in appearance,
++        'no hard one-pixel gradient boundary': 'hero + 1.dp.toPx()' not in ui and '(hero / end) to landing' in ui,
++        'high-resolution tier shares original disk bytes': 'if (hero) 1600 else 480' in ui and 'diskPath(diskKey)' in ui and 'rememberDisk(diskKey, bytes)' in ui,
++        'cover memory has pixel and count bounds': '64L * 1024 * 1024' in ui and 'size > 64' in ui,
++        'wide photos remain unmodified': 'source.width >= 1000) return source' in hero,
++        'small portraits have bounded enlargement and feathering': '1.25' in hero and 'AlphaComposite.DstIn' in hero and 'BufferedImage(24, 10' in hero,
++        'black caption uses supported Compose drag area': 'import androidx.compose.foundation.window.WindowDraggableArea' in ui and 'WindowDraggableArea(' in ui,
++        'decoration selected once with native fallback': 'remember { ui.appearance.nativeFrame }' in ui and 'undecorated = !nativeFrame, resizable = true' in ui,
++        'native and caption close share shutdown': 'Window(onCloseRequest = close' in ui and 'WindowCaptionButton("Закрыть приложение", 3, close)' in ui,
++        'caption buttons labelled and keyboard clickable': 'contentDescription = label' in chrome and 'role = Role.Button' in chrome,
++        'appearance writes are serialized off UI thread': 'Channel<DesktopAppearance>(Channel.CONFLATED)' in model and 'for (value in appearanceWrites)' in model and 'appearanceWriter.join()' in model,
++        'settings expose motion panorama and native frame': all(x in ui for x in ('s.appearance.copy(motion = it)', 's.appearance.copy(panoramicArtists = it)', 's.appearance.copy(nativeFrame = it)')),
++        'notice overlays rather than shifting scroll viewport': 'padding(bottom = 104.dp, start = 24.dp, end = 24.dp)' in ui,
++        'local artwork is not called an artist portrait': 'Исполнитель · обложка локального трека' in ui,
++        'desktop package version advanced': 'version = "0.3.5"' in build and 'packageVersion = "0.3.5"' in build,
++    })
++    discovery = read(prefix + 'desktop/ui/DiscoveryArtwork.kt')
++    checks.update({
++        'discovery uses 24 real catalog queries': discovery.count('DiscoveryGenre("') == 24 and 'api.browse(query, "album").items' in model,
++        'discovery bounds fanout cache and errors': 'Semaphore(2)' in discovery and 'cache.size > 48' in discovery and '60_000L else 600_000L' in discovery,
++        'discovery cancellation propagates': 'catch (e: CancellationException) { throw e }' in discovery and 'currentCoroutineContext().ensureActive()' in discovery,
++        'discovery refresh invalidates obsolete response': 'generation++; cache.clear()' in discovery and 'token == generation' in discovery,
++        'genre artwork loaded lazily with debounce': 'produceState<List<CatalogCollection>>' in ui and 'delay(180)' in ui and 's.discovery.albums(genre.query)' in ui,
++        'tilted covers open actual catalog albums': 'rotationZ = if (front) 14f else -9f' in ui and '.clickable { s.open(album) }' in ui,
++        'search refresh uses visible field not stale query': 'if (searchText.isNotBlank()) search(searchText, s.searchKind)' in ui and 's.cancelSearch(); s.refreshDiscovery()' in ui,
++        'refresh handler does not silently ignore busy clicks': 'IconButton(onClick = onClick, enabled = enabled' in ui and 'if (!refreshing) onClick()' not in ui,
++        'home search has no verbose helper labels': 'Введи запрос в строке сверху — подсказки появятся во время ввода' not in ui and 'не персональная выдача сервера.' not in ui,
++        'double click observer does not steal window drag': 'awaitPointerEvent(PointerEventPass.Initial)' in ui and 'detectTapGestures(onDoubleTap' not in ui,
++    })
+     upstream = json.loads(read('upstream.json'))
+     for item in upstream['files']:
+         checks['upstream hash: ' + item['path']] = hashlib.sha256((root/item['path']).read_bytes()).hexdigest() == item['sha256']
+--- /dev/null
++++ b/tools/check_hero_model.py
+@@ -0,0 +1,32 @@
++"""Independent numerical model; not execution of Kotlin, Compose or a screenshot test."""
++import math
++
++
++def visibility(scroll, height):
++    t = max(0.0, min(1.0, scroll / max(height, 1)))
++    return 1 - t * t * (3 - 2 * t)
++
++checks = 0
++for height in (252, 316, 340, 420):
++    previous = 1.0
++    for step in range(-100, 20001):
++        scroll = step / 10
++        a = visibility(scroll, height)
++        assert math.isfinite(a) and 0 <= a <= 1
++        assert a <= previous + 1e-12
++        assert previous - a < .001
++        if scroll >= height:
++            assert a == 0
++        previous = a
++        checks += 1
++    for step in range(1001):
++        a = step / 1000
++        for tone in (0, .1, .3, .7, 1):
++            panel = 16 / 255
++            landing = panel + (tone - panel) * .62
++            faded_tail = panel * (1 - a) + landing * a
++            seam = panel + (tone - panel) * (.62 * a)
++            assert abs(faded_tail - seam) < 1e-12
++            checks += 1
++print(f'PASS independent hero fade/seam model: {checks} numeric assertions')
++print('NOT a Kotlin execution; motion, contrast over photographs and render require Windows acceptance.')
