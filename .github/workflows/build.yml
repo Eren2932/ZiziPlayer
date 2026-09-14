@@ -265,6 +265,8 @@ jobs:
           # (6.17.0) в собранном APK физически не работает. Секрета нет — это нормально,
           # просто в релизе не будет служебных строк; но молча терять функцию нельзя.
           DEV_UNLOCK_CODE: ${{ secrets.DEV_UNLOCK_CODE }}
+          ACCOUNT_URL: ${{ vars.ACCOUNT_URL }}
+          GOOGLE_WEB_CLIENT_ID: ${{ vars.GOOGLE_WEB_CLIENT_ID }}
         run: |
           set -o pipefail
           gradle --no-daemon :app:assembleRelease --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
