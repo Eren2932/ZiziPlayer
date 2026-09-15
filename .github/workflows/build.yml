@@ -199,6 +199,7 @@ jobs:
           python3 tools/test_account_6500_contracts.py
           python3 tools/test_account_6510_contracts.py
           python3 tools/test_account_6520_contracts.py
+          python3 tools/test_library_6530_contracts.py
           python3 server/tools/test_browse.py
           python3 server/tools/test_browse_deploy.py
           python3 server/tools/test_probe_browse.py
@@ -208,6 +209,10 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+
+      - name: Cloud library decision policy
+        working-directory: ${{ env.PROJECT_ROOT }}
+        run: python3 tools/test_library_6530.py
 
       - name: Gradle 8.11.1
         uses: gradle/actions/setup-gradle@v4
