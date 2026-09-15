@@ -220,11 +220,11 @@ jobs:
           gradle-version: '8.11.1'
           cache-read-only: false
 
-      - name: Kotlin compile and JVM tests
+      - name: Kotlin compile, Android test compile and JVM tests
         working-directory: ${{ env.PROJECT_ROOT }}
         run: |
           set -o pipefail
-          gradle --no-daemon :app:testDebugUnitTest --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/unit-tests.log"
+          gradle --no-daemon :app:testDebugUnitTest :app:compileDebugAndroidTestKotlin --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/unit-tests.log"
 
       - name: Upload JVM test reports
         if: always()
@@ -290,11 +290,15 @@ jobs:
       - name: Error summary
         if: failure()
         run: |
-          if [ ! -f build.log ]; then exit 0; fi
+          logs=()
+          for file in unit-tests.log build.log; do
+            if [ -f "$file" ]; then logs+=("$file"); fi
+          done
+          if [ "${#logs[@]}" -eq 0 ]; then exit 0; fi
           {
             echo "## Что сломалось"
             echo '```'
-            grep -nE "^e: |error:|Unresolved reference|Caused by|What went wrong|FAILURE:|Execution failed for task" build.log | head -n 40
+            grep -nHE "^e: |error:|Unresolved reference|Caused by|What went wrong|FAILURE:|Execution failed for task" "${logs[@]}" | head -n 60 || true
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
