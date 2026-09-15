@@ -196,6 +196,9 @@ jobs:
           python3 server/tools/test_stage2_tools.py
           python3 server/tools/test_probe_contention.py
           python3 tools/test_ci_source.py
+          python3 tools/test_account_6500_contracts.py
+          python3 tools/test_account_6510_contracts.py
+          python3 tools/test_account_6520_contracts.py
           python3 server/tools/test_browse.py
           python3 server/tools/test_browse_deploy.py
           python3 server/tools/test_probe_browse.py
@@ -252,6 +255,14 @@ jobs:
 
       # continue-on-error здесь нет намеренно: зелёная галочка на провалившейся сборке
       # хуже отсутствия CI, потому что учит доверять галочке.
+      - name: Validate account release configuration
+        working-directory: ${{ env.PROJECT_ROOT }}
+        env:
+          ACCOUNT_URL: ${{ vars.ACCOUNT_URL }}
+          GOOGLE_WEB_CLIENT_ID: ${{ vars.GOOGLE_WEB_CLIENT_ID }}
+          SIGNING_STORE_FILE: ${{ steps.keystore.outputs.path }}
+        run: python3 tools/check_account_release.py
+
       - name: Assemble release
         working-directory: ${{ env.PROJECT_ROOT }}
         env:
@@ -289,7 +300,7 @@ jobs:
           apk=$(find "$PROJECT_ROOT/app/build/outputs/apk/release" -name '*.apk' | head -1)
           signer=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | tail -1)
           "$signer" verify --print-certs "$apk" > "$RUNNER_TEMP/zizi-signature.txt"
-          grep -E 'certificate DN|SHA-256' "$RUNNER_TEMP/zizi-signature.txt" || true
+          grep -E 'certificate DN|SHA-1|SHA-256' "$RUNNER_TEMP/zizi-signature.txt" || true
           if grep -q 'CN=Android Debug' "$RUNNER_TEMP/zizi-signature.txt"; then
             if [ "${{ github.event_name }}" = "release" ] || [[ "${{ github.ref }}" == refs/tags/* ]]; then
               echo "::error::APK подписан debug-ключом — такой релиз выкладывать нельзя"
