@@ -204,6 +204,37 @@ jobs:
           python3 server/tools/test_browse_deploy.py
           python3 server/tools/test_probe_browse.py
 
+      - name: Validate optional lyrics server configuration
+        env:
+          LYRICS_SERVER_URL: ${{ vars.LYRICS_SERVER_URL }}
+        run: |
+          python3 - <<'PY_CONFIG'
+          import os
+          from urllib.parse import urlsplit
+          value = os.environ.get('LYRICS_SERVER_URL', '').strip()
+          if not value:
+              message = 'LYRICS_SERVER_URL is empty: server sources DISABLED; APK uses LRCLIB and lyrics.ovh only.'
+              print('::warning::' + message)
+          else:
+              try:
+                  url = urlsplit(value)
+                  valid = (url.scheme == 'https' and bool(url.hostname) and not url.username
+                           and not url.password and not url.query and not url.fragment
+                           and url.port in (None, 443) and not any(c.isspace() for c in value))
+              except ValueError:
+                  valid = False
+              if not valid:
+                  raise SystemExit('Invalid LYRICS_SERVER_URL: expected HTTPS base URL without credentials/query/fragment on port 443')
+              message = 'Lyrics server URL configured. Availability, upstream access and catalogue coverage still require deployment testing.'
+              print('::notice::' + message)
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              summary.write('### Lyrics configuration\n' + message + '\n')
+          PY_CONFIG
+
+      - name: Lyrics server unit tests (no network or audio)
+        working-directory: ${{ env.PROJECT_ROOT }}
+        run: python3 -m unittest discover -s lyrics_server/tests -v
+
       - name: JDK 17
         uses: actions/setup-java@v4
         with:
@@ -275,6 +306,7 @@ jobs:
           SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
           SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
           SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
+          LYRICS_SERVER_URL: ${{ vars.LYRICS_SERVER_URL }}
           RESOLVER_URL: ${{ vars.RESOLVER_URL }}
           RESOLVER_TOKEN: ${{ secrets.RESOLVER_TOKEN }}
           # 6.24.1: без этой строки BuildConfig.DEV_UNLOCK_HASH пустой и служебный доступ
