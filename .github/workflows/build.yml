@@ -203,6 +203,11 @@ jobs:
           python3 server/tools/test_browse.py
           python3 server/tools/test_browse_deploy.py
           python3 server/tools/test_probe_browse.py
+          # 6.66.0: подбор версий и запрет автопропуска. Без этих двух строк обе регрессии
+          # возвращаются молча — в check_selftest.py они тоже врезаны.
+          python3 server/tools/test_version_family.py
+          python3 tools/test_queue_6660_contracts.py
+          python3 tools/test_release_6680.py
 
       - name: Validate optional lyrics server configuration
         env:
@@ -267,6 +272,62 @@ jobs:
             _src/**/app/build/reports/tests/
             _src/**/app/build/test-results/
           if-no-files-found: ignore
+
+      # 6.69.2: compiling androidTest is NOT executing it. API 28 catches cutout
+      # linkage regressions; API 35 also exercises the system Path adapter.
+      # These run before signing/assembling/publishing the release. No continue-on-error.
+      - name: Enable KVM for Android regression tests
+        run: |
+          set -euo pipefail
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Camera and collection Android tests (API 28)
+        id: camera_api28
+        timeout-minutes: 25
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 28
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          working-directory: ${{ env.PROJECT_ROOT }}
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front none
+          script: gradle --no-daemon :app:connectedDebugAndroidTest --rerun-tasks -Pandroid.testInstrumentationRunnerArguments.class=app.ziziplayer.ui.CameraCutout6692Test,app.ziziplayer.ui.CameraMorph6692UiTest,app.ziziplayer.ui.CollectionHeader6600Test,app.ziziplayer.ui.CollectionHeader6601Test,app.ziziplayer.ui.CollectionHeader6602Test --stacktrace
+
+      - name: Upload Android API 28 results
+        if: always() && steps.camera_api28.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: camera-collection-api-28
+          path: |
+            _src/**/app/build/reports/androidTests/
+            _src/**/app/build/outputs/androidTest-results/
+          if-no-files-found: warn
+
+      - name: Camera and collection Android tests (API 35)
+        id: camera_api35
+        timeout-minutes: 25
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          working-directory: ${{ env.PROJECT_ROOT }}
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front none
+          script: gradle --no-daemon :app:connectedDebugAndroidTest --rerun-tasks -Pandroid.testInstrumentationRunnerArguments.class=app.ziziplayer.ui.CameraCutout6692Test,app.ziziplayer.ui.CameraMorph6692UiTest,app.ziziplayer.ui.CollectionHeader6600Test,app.ziziplayer.ui.CollectionHeader6601Test,app.ziziplayer.ui.CollectionHeader6602Test --stacktrace
+
+      - name: Upload Android API 35 results
+        if: always() && steps.camera_api35.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: camera-collection-api-35
+          path: |
+            _src/**/app/build/reports/androidTests/
+            _src/**/app/build/outputs/androidTest-results/
+          if-no-files-found: warn
 
       # Хранилище ключа едет в секретах как base64: бинарь в секрет иначе не положить.
       # На теге и на релизе отсутствие ключа — это ошибка, а не предупреждение: debug-APK,
@@ -355,55 +416,4 @@ jobs:
       - name: Rename artifact
         run: |
           set -euo pipefail
-          apk=$(find "$PROJECT_ROOT/app/build/outputs/apk/release" -name '*.apk' | head -1)
-          cp "$apk" "ZiziPlayer-v${APP_VERSION}.apk"
-          ls -lh ZiziPlayer-v*.apk
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ZiziPlayer-APK-v${{ env.APP_VERSION }}
-          path: ZiziPlayer-v*.apk
-          if-no-files-found: error
-          retention-days: 90
-
-      - name: Upload build log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-log
-          path: build.log
-          if-no-files-found: ignore
-          retention-days: 30
-
-      # Один шаг на три сценария: push тега, публикация релиза через веб-морду,
-      # и ручной догон уже существующего релиза (attach_to_tag).
-      - name: Determine release tag
-        id: rel
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          REF_TYPE: ${{ github.ref_type }}
-          REF_NAME: ${{ github.ref_name }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
-          ATTACH_TAG: ${{ inputs.attach_to_tag }}
-        run: |
-          set -euo pipefail
-          tag=""
-          case "$EVENT_NAME" in
-            push) if [ "$REF_TYPE" = "tag" ]; then tag="$REF_NAME"; fi ;;
-            release) tag="$RELEASE_TAG" ;;
-            workflow_dispatch) tag="$ATTACH_TAG" ;;
-          esac
-          if [ -n "$tag" ] && ! [[ "$tag" =~ ^v[0-9][A-Za-z0-9._+-]*$ ]]; then
-            echo "::error::Refusing non-Android release tag."
-            exit 1
-          fi
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          [ -n "$tag" ] && echo "::notice::APK поедет в релиз $tag" || echo "::notice::релиз не трогаю, APK только в артефактах"
-
-      - name: Attach APK to release
-        if: steps.rel.outputs.tag != ''
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.rel.outputs.tag }}
-          files: ZiziPlayer-v*.apk
-          fail_on_unmatched_files: true
+          apk=$(find "$PROJECT_ROOT/app/build/outputs/apk/release" -name '*.apk' |
