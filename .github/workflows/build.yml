@@ -416,4 +416,55 @@ jobs:
       - name: Rename artifact
         run: |
           set -euo pipefail
-          apk=$(find "$PROJECT_ROOT/app/build/outputs/apk/release" -name '*.apk' |
+          apk=$(find "$PROJECT_ROOT/app/build/outputs/apk/release" -name '*.apk' | head -1)
+          cp "$apk" "ZiziPlayer-v${APP_VERSION}.apk"
+          ls -lh ZiziPlayer-v*.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ZiziPlayer-APK-v${{ env.APP_VERSION }}
+          path: ZiziPlayer-v*.apk
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+          if-no-files-found: ignore
+          retention-days: 30
+
+      # Один шаг на три сценария: push тега, публикация релиза через веб-морду,
+      # и ручной догон уже существующего релиза (attach_to_tag).
+      - name: Determine release tag
+        id: rel
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          ATTACH_TAG: ${{ inputs.attach_to_tag }}
+        run: |
+          set -euo pipefail
+          tag=""
+          case "$EVENT_NAME" in
+            push) if [ "$REF_TYPE" = "tag" ]; then tag="$REF_NAME"; fi ;;
+            release) tag="$RELEASE_TAG" ;;
+            workflow_dispatch) tag="$ATTACH_TAG" ;;
+          esac
+          if [ -n "$tag" ] && ! [[ "$tag" =~ ^v[0-9][A-Za-z0-9._+-]*$ ]]; then
+            echo "::error::Refusing non-Android release tag."
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          [ -n "$tag" ] && echo "::notice::APK поедет в релиз $tag" || echo "::notice::релиз не трогаю, APK только в артефактах"
+
+      - name: Attach APK to release
+        if: steps.rel.outputs.tag != ''
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.rel.outputs.tag }}
+          files: ZiziPlayer-v*.apk
+          fail_on_unmatched_files: true
