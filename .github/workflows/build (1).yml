@@ -1,0 +1,690 @@
+name: Build & release ZiziPlayer APK
+
+# Репозиторий устроен как «код лежит в zip-архиве в корне». Поэтому workflow сначала
+# распаковывает самый свежий zip, а потом собирает проект из него. Workflow, лежащий
+# ВНУТРИ zip, GitHub никогда не запускает: он читает только .github/workflows в корне.
+
+on:
+  workflow_dispatch:
+    inputs:
+      attach_to_tag:
+        description: 'Прикрепить APK к уже существующему релизу с этим тегом (например v6.11.0). Пусто — просто собрать.'
+        required: false
+        default: ''
+      run_camera_tests:
+        description: 'Отдельно запустить Android-регрессии API 28/35. Не блокирует job сборки APK.'
+        type: boolean
+        required: false
+        default: false
+  push:
+    branches: [main, master]
+    # Android updates remain ZIP-based. Desktop/docs-only pushes do not build APK.
+    paths:
+      - 'ZiziPlayer-v*.zip'
+      - '.github/workflows/build.yml'
+    tags: ['v[0-9]*']
+  release:
+    types: [published]
+
+# Без этого softprops/action-gh-release получает 403: у GITHUB_TOKEN по умолчанию
+# может не быть права записи в Releases.
+permissions:
+  contents: write
+
+concurrency:
+  group: zizi-android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  camera-regression:
+    # Explicit opt-in only. No signing secrets, publishing or build-job dependency.
+    if: github.event_name == 'workflow_dispatch' && inputs.run_camera_tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Unpack source zip by versionCode
+        run: |
+          set -euo pipefail
+          python3 - <<'PY_SOURCE'
+          import hashlib
+          import os
+          from pathlib import Path, PurePosixPath
+          import re
+          import shutil
+          import stat
+          import zipfile
+          
+          candidates = []
+          for path in sorted(Path('.').glob('*.zip')):
+              try:
+                  with zipfile.ZipFile(path) as z:
+                      names = z.namelist()
+                      settings = [n for n in names if PurePosixPath(n).name == 'settings.gradle.kts']
+                      if len(settings) != 1:
+                          print('Skip non-project or ambiguous ZIP:', path.name)
+                          continue
+                      parent = str(PurePosixPath(settings[0]).parent)
+                      prefix = '' if parent == '.' else parent + '/'
+                      gradle = prefix + 'app/build.gradle.kts'
+                      if gradle not in names:
+                          continue
+                      info = z.getinfo(gradle)
+                      if info.file_size > 100000:
+                          raise ValueError('oversized Gradle metadata')
+                      text = z.read(gradle).decode('utf-8')
+                      codes = re.findall(r'^\s*versionCode\s*=\s*([0-9]+)\s*$', text, re.M)
+                      versions = re.findall(r'^\s*versionName\s*=\s*"([A-Za-z0-9._+-]+)"\s*$', text, re.M)
+                      if len(codes) != 1 or len(versions) != 1:
+                          raise ValueError('ambiguous version metadata')
+                      candidates.append((int(codes[0]), path, prefix, versions[0]))
+              except (OSError, ValueError, zipfile.BadZipFile):
+                  raise SystemExit('Invalid source ZIP: ' + path.name)
+          if not candidates:
+              raise SystemExit('No full Gradle project ZIP found')
+          maximum = max(c[0] for c in candidates)
+          winners = [c for c in candidates if c[0] == maximum]
+          if len(winners) != 1:
+              raise SystemExit('Multiple ZIPs with highest versionCode; keep one: ' + ', '.join(c[1].name for c in winners))
+          code, path, prefix, version = winners[0]
+          if any(c in str(path) + prefix for c in '\r\n'):
+              raise SystemExit('Unsafe path')
+          with zipfile.ZipFile(path) as z:
+              entries = z.infolist()
+              if len(entries) > 10000 or sum(x.file_size for x in entries) > 100 * 1024 * 1024:
+                  raise SystemExit('Source archive exceeds extraction limits')
+              if len(set(z.namelist())) != len(entries):
+                  raise SystemExit('Duplicate archive entries')
+              for info in entries:
+                  n = PurePosixPath(info.filename)
+                  mode = info.external_attr >> 16
+                  if (n.is_absolute() or '..' in n.parts or '\\' in info.filename
+                          or any(c in info.filename for c in '\r\n') or stat.S_ISLNK(mode)):
+                      raise SystemExit('Unsafe archive entry')
+              shutil.rmtree('_src', ignore_errors=True)
+              Path('_src').mkdir()
+              z.extractall('_src')
+          root = '_src/' + prefix.rstrip('/') if prefix else '_src'
+          with open(os.environ['GITHUB_ENV'], 'a') as out:
+              out.write('PROJECT_ROOT=' + root + '\nAPP_VERSION=' + version + '\n')
+          print('Selected:', path.name, 'version:', version, 'versionCode:', code)
+          print('SHA256:', hashlib.sha256(path.read_bytes()).hexdigest())
+          PY_SOURCE
+
+      - name: JDK 17 for Android regression
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Gradle 8.11.1 for Android regression
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+          cache-read-only: false
+
+      # Build both APKs before the emulator competes with Kotlin/D8 for memory.
+      - name: Assemble instrumentation APKs before starting Android
+        working-directory: ${{ env.PROJECT_ROOT }}
+        run: |
+          set -o pipefail
+          gradle --no-daemon --max-workers=2 :app:assembleDebug :app:assembleDebugAndroidTest --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/instrumentation-build.log"
+
+      # 6.69.2: compiling androidTest is NOT executing it. API 28 catches cutout
+      # linkage regressions; API 35 also exercises the system Path adapter.
+      # Fail this diagnostic job honestly. APK job is independent and has no needs.
+      # No continue-on-error; an Android failure stays visible as a failure.
+      - name: Enable KVM for Android regression tests
+        run: |
+          set -euo pipefail
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Camera and collection Android tests (API 28)
+        id: camera_api28
+        timeout-minutes: 25
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2 used in run 36307603542
+        with:
+          api-level: 28
+          # Freeze the emulator binary observed in the failing run; not a rollback.
+          emulator-build: '15917651' # Android Emulator 37.1.11.0
+          avd-name: zizi-camera-api28
+          force-avd-creation: true
+          cores: 2
+          ram-size: 2048M
+          heap-size: 256M
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          working-directory: ${{ env.PROJECT_ROOT }}
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -feature -Vulkan -noaudio -no-boot-anim -camera-back none -camera-front none
+          script: bash tools/run_camera_ci.sh 28
+
+      - name: Upload Android API 28 results
+        if: always() && steps.camera_api28.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: camera-collection-api-28
+          path: |
+            _src/**/build/ci/android-api-28/
+            _src/**/app/build/reports/androidTests/
+            _src/**/app/build/outputs/androidTest-results/
+          if-no-files-found: warn
+
+      - name: Camera and collection Android tests (API 35)
+        id: camera_api35
+        timeout-minutes: 25
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2 used in run 36307603542
+        with:
+          api-level: 35
+          # Freeze the emulator binary observed in the failing run; not a rollback.
+          emulator-build: '15917651' # Android Emulator 37.1.11.0
+          avd-name: zizi-camera-api35
+          force-avd-creation: true
+          cores: 2
+          ram-size: 2048M
+          heap-size: 256M
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          working-directory: ${{ env.PROJECT_ROOT }}
+          # API 35 renderer candidate: Mesa Lavapipe, not deprecated SwiftShader GLES.
+          # Use backend defaults rather than the previous forced Vulkan-disable flag.
+          # RenderEffect and every instrumentation assertion remain enabled.
+          emulator-options: -no-window -gpu lavapipe -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -verbose
+          script: bash tools/run_camera_ci.sh 35
+
+      - name: Collect Android API 35 emulator host diagnostics
+        if: always() && steps.camera_api35.outcome != 'skipped'
+        run: |
+          python3 - <<'PY_EMULATOR_DIAGNOSTICS'
+          import json
+          import os
+          from pathlib import Path
+          import shutil
+          import subprocess
+          
+          LIMIT = 64 * 1024 * 1024
+          
+          
+          def copy_diagnostics(sources, destination, limit=LIMIT):
+              destination.mkdir(parents=True, exist_ok=True)
+              manifest = []
+              used = 0
+              for index, source in enumerate(sources):
+                  source = Path(source)
+                  if source.is_symlink():
+                      manifest.append({'source': str(source), 'status': 'symlink-not-copied'})
+                      continue
+                  if not source.exists():
+                      manifest.append({'source': str(source), 'status': 'absent'})
+                      continue
+                  files = sorted(source.rglob('*')) if source.is_dir() else [source]
+                  for file in files:
+                      if file.is_dir() or file.is_symlink():
+                          continue
+                      try:
+                          if not file.resolve().is_relative_to(source.resolve() if source.is_dir() else source.parent.resolve()):
+                              continue
+                          size = file.stat().st_size
+                          if used + size > limit:
+                              manifest.append({'source': str(file), 'status': 'size-limit', 'bytes': size})
+                              continue
+                          relative = file.relative_to(source) if source.is_dir() else Path(file.name)
+                          target = destination / (str(index) + '-' + source.name) / relative
+                          target.parent.mkdir(parents=True, exist_ok=True)
+                          shutil.copyfile(file, target)
+                          used += size
+                          manifest.append({'source': str(file), 'status': 'copied', 'bytes': size})
+                      except OSError as error:
+                          manifest.append({'source': str(file), 'status': type(error).__name__})
+              (destination / 'manifest.json').write_text(json.dumps(manifest, indent=2))
+              return manifest
+          
+          
+          def capture(args, destination):
+              try:
+                  result = subprocess.run(args, capture_output=True, text=True, timeout=12)
+                  text = 'exit=' + str(result.returncode) + '\n' + result.stdout + result.stderr
+              except (OSError, subprocess.TimeoutExpired) as error:
+                  text = type(error).__name__ + ': ' + str(error)
+              destination.write_text(text)
+          
+          
+          def main():
+              root = Path(os.environ['PROJECT_ROOT'])
+              out = root / 'build/ci/android-api-35/emulator-host'
+              sdk = Path(os.environ['ANDROID_HOME'])
+              avd_home = Path(os.environ.get('ANDROID_AVD_HOME', str(Path.home() / '.android/avd')))
+              # Never copy the full AVD, keystore, Gradle cache or environment variables.
+              sources = [sdk / 'emulator/source.properties',
+                         sdk / 'system-images/android-35/google_apis/x86_64/source.properties',
+                         avd_home / 'zizi-camera-api35.avd/config.ini']
+              temp = Path(os.environ.get('TMPDIR', '/tmp'))
+              sources += sorted(temp.glob('android-*/emu-crash-*'))
+              sources += sorted(temp.glob('emu-crash-*'))
+              copy_diagnostics(sources, out)
+              capture([str(sdk / 'emulator/emulator'), '-version'], out / 'version.txt')
+              capture([str(sdk / 'emulator/emulator'), '-help-gpu'], out / 'gpu-modes.txt')
+              # Read-only, noninteractive; refusal is retained, not reported as evidence of OOM.
+              capture(['sudo', '-n', 'dmesg', '--ctime'], out / 'host-kernel.txt')
+              capture(['coredumpctl', '--no-pager', 'list'], out / 'host-core-list.txt')
+              print('Emulator host diagnostics:', out)
+          
+          
+          if __name__ == '__main__':
+              main()
+          PY_EMULATOR_DIAGNOSTICS
+
+      - name: Upload Android API 35 results
+        if: always() && steps.camera_api35.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: camera-collection-api-35
+          path: |
+            _src/**/build/ci/android-api-35/
+            _src/**/app/build/reports/androidTests/
+            _src/**/app/build/outputs/androidTest-results/
+          if-no-files-found: warn
+
+      - name: Upload instrumentation build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: camera-instrumentation-build-log
+          path: instrumentation-build.log
+          if-no-files-found: ignore
+
+  build:
+    # release events have no paths filter: explicitly exclude desktop-v* releases.
+    if: github.event_name != 'release' || startsWith(github.event.release.tag_name, 'v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate Android release namespace
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          ATTACH_TAG: ${{ inputs.attach_to_tag }}
+        run: |
+          set -euo pipefail
+          tag=""
+          case "$EVENT_NAME" in
+            release) tag="$RELEASE_TAG" ;;
+            push) if [ "$REF_TYPE" = "tag" ]; then tag="$REF_NAME"; fi ;;
+            workflow_dispatch) tag="$ATTACH_TAG" ;;
+          esac
+          if [ -n "$tag" ] && ! [[ "$tag" =~ ^v[0-9][A-Za-z0-9._+-]*$ ]]; then
+            echo "::error::Android release tags must be v<version>. Use desktop-v<version> only for desktop releases."
+            exit 1
+          fi
+
+      - name: Unpack source zip by versionCode
+        run: |
+          set -euo pipefail
+          python3 - <<'PY_SOURCE'
+          import hashlib
+          import os
+          from pathlib import Path, PurePosixPath
+          import re
+          import shutil
+          import stat
+          import zipfile
+          
+          candidates = []
+          for path in sorted(Path('.').glob('*.zip')):
+              try:
+                  with zipfile.ZipFile(path) as z:
+                      names = z.namelist()
+                      settings = [n for n in names if PurePosixPath(n).name == 'settings.gradle.kts']
+                      if len(settings) != 1:
+                          print('Skip non-project or ambiguous ZIP:', path.name)
+                          continue
+                      parent = str(PurePosixPath(settings[0]).parent)
+                      prefix = '' if parent == '.' else parent + '/'
+                      gradle = prefix + 'app/build.gradle.kts'
+                      if gradle not in names:
+                          continue
+                      info = z.getinfo(gradle)
+                      if info.file_size > 100000:
+                          raise ValueError('oversized Gradle metadata')
+                      text = z.read(gradle).decode('utf-8')
+                      codes = re.findall(r'^\s*versionCode\s*=\s*([0-9]+)\s*$', text, re.M)
+                      versions = re.findall(r'^\s*versionName\s*=\s*"([A-Za-z0-9._+-]+)"\s*$', text, re.M)
+                      if len(codes) != 1 or len(versions) != 1:
+                          raise ValueError('ambiguous version metadata')
+                      candidates.append((int(codes[0]), path, prefix, versions[0]))
+              except (OSError, ValueError, zipfile.BadZipFile):
+                  raise SystemExit('Invalid source ZIP: ' + path.name)
+          if not candidates:
+              raise SystemExit('No full Gradle project ZIP found')
+          maximum = max(c[0] for c in candidates)
+          winners = [c for c in candidates if c[0] == maximum]
+          if len(winners) != 1:
+              raise SystemExit('Multiple ZIPs with highest versionCode; keep one: ' + ', '.join(c[1].name for c in winners))
+          code, path, prefix, version = winners[0]
+          if any(c in str(path) + prefix for c in '\r\n'):
+              raise SystemExit('Unsafe path')
+          with zipfile.ZipFile(path) as z:
+              entries = z.infolist()
+              if len(entries) > 10000 or sum(x.file_size for x in entries) > 100 * 1024 * 1024:
+                  raise SystemExit('Source archive exceeds extraction limits')
+              if len(set(z.namelist())) != len(entries):
+                  raise SystemExit('Duplicate archive entries')
+              for info in entries:
+                  n = PurePosixPath(info.filename)
+                  mode = info.external_attr >> 16
+                  if (n.is_absolute() or '..' in n.parts or '\\' in info.filename
+                          or any(c in info.filename for c in '\r\n') or stat.S_ISLNK(mode)):
+                      raise SystemExit('Unsafe archive entry')
+              shutil.rmtree('_src', ignore_errors=True)
+              Path('_src').mkdir()
+              z.extractall('_src')
+          root = '_src/' + prefix.rstrip('/') if prefix else '_src'
+          with open(os.environ['GITHUB_ENV'], 'a') as out:
+              out.write('PROJECT_ROOT=' + root + '\nAPP_VERSION=' + version + '\n')
+          print('Selected:', path.name, 'version:', version, 'versionCode:', code)
+          print('SHA256:', hashlib.sha256(path.read_bytes()).hexdigest())
+          PY_SOURCE
+
+      # 6.24.1: две секунды проверки вместо двух минут сборки. Ровно эти два класса ошибок
+      # уже топили релизы: незакрытый блочный комментарий (6.19.0) и обращение к члену
+      # экземпляра через имя класса (6.19.1). Шаги стоят до Gradle: падать здесь дешевле.
+      - name: Самотест проверок
+        # 6.37.1. Идёт ПЕРВЫМ и валит сборку по-настоящему, в отличие от самих проверок.
+        # Причина в CHANGELOG_v6.37.1.md: проверка молча теряла аргументы и не имела способа
+        # об этом сообщить. Если прибор не воспроизводит свои фикстуры, результатам прогона
+        # по коду верить нельзя, и собирать APK на них - хуже, чем не собрать вовсе.
+        working-directory: ${{ env.PROJECT_ROOT }}
+        run: python3 tools/check_selftest.py
+
+      - name: Синтаксис исходников
+        working-directory: ${{ env.PROJECT_ROOT }}
+        run: python3 tools/check_kotlin_syntax.py app/src
+
+      - name: Импорты
+        # 6.37.1. Проверка существует с 6.19.1 и записана в правило №2 как ОБЯЗАТЕЛЬНАЯ,
+        # но в этом workflow её не вызывали ни разу: три шага из четырёх. Ровно тот случай,
+        # который в проекте называется «написано, но не подключено», - здесь в самом CI.
+        working-directory: ${{ env.PROJECT_ROOT }}
+        run: python3 tools/check_imports.py app/src/main
+
+      - name: Квалифицированные ссылки
+        working-directory: ${{ env.PROJECT_ROOT }}
+        run: python3 tools/check_static_refs.py app/src/main
+
+      # 6.27.2: третья проверка того же сорта. Утопила 6.27.1 хвостовая лямбда, севшая на
+      # modifier вместо onClick, — синтаксис цел, ссылки живые, обе прежние проверки молчали.
+      # Проверка эвристическая и сборку не роняет: она печатает подозрения в лог шага.
+      - name: Аргументы вызовов
+        working-directory: ${{ env.PROJECT_ROOT }}
+        run: python3 tools/check_call_args.py app/src/main
+
+      # 6.37.2: сервер тоже код, и в отличие от Kotlin его здесь можно ЗАПУСТИТЬ.
+      # Проверки Kotlin - эвристики, они говорят «похоже на правду». Эти два шага говорят
+      # «работает»: юнит-тесты границы каталога и тест самой врезки (что защита висит на
+      # роутере, а не на тех роутах, которые не забыли). Валят сборку по-настоящему.
+      - name: Тесты границы каталога
+        working-directory: ${{ env.PROJECT_ROOT }}
+        run: python3 server/tools/test_zizi_guard.py
+
+      - name: Врезка границы в zizi_catalog
+        working-directory: ${{ env.PROJECT_ROOT }}
+        run: python3 server/tools/test_catalog_wiring.py
+
+      - name: Тесты ключа на устройство (zizi_guard 1.8)
+        working-directory: ${{ env.PROJECT_ROOT }}
+        run: python3 server/tools/test_zizi_device.py
+
+      - name: Врезка каталога в резолвер не потеряна
+        working-directory: ${{ env.PROJECT_ROOT }}
+        run: |
+          grep -q 'include_router(catalog_router)' server/zizi_resolver.py \
+            || { echo 'В zizi_resolver.py нет include_router(catalog_router).'; \
+                 echo 'Так 6.37.2 встал с 404 на /catalog/health при зелёном старте.'; exit 1; }
+
+      - name: Синтаксис серверных модулей
+        working-directory: ${{ env.PROJECT_ROOT }}
+        run: python3 server/tools/check_py_syntax.py server
+
+      - name: Stage 2 regression and diagnostic probe tests (offline)
+        working-directory: ${{ env.PROJECT_ROOT }}
+        run: |
+          set -euo pipefail
+          python3 server/tools/test_zizi_extra.py
+          python3 server/tools/test_stage2.py
+          python3 server/tools/test_resolver_stage2.py
+          python3 server/tools/test_stage2_tools.py
+          python3 server/tools/test_probe_contention.py
+          python3 tools/test_ci_source.py
+          python3 tools/test_account_6500_contracts.py
+          python3 tools/test_account_6510_contracts.py
+          python3 tools/test_account_6520_contracts.py
+          python3 tools/test_library_6530_contracts.py
+          python3 server/tools/test_browse.py
+          python3 server/tools/test_browse_deploy.py
+          python3 server/tools/test_probe_browse.py
+          # 6.66.0: подбор версий и запрет автопропуска. Без этих двух строк обе регрессии
+          # возвращаются молча — в check_selftest.py они тоже врезаны.
+          python3 server/tools/test_version_family.py
+          python3 tools/test_queue_6660_contracts.py
+          python3 tools/test_release_6680.py
+
+      - name: Validate optional lyrics server configuration
+        env:
+          LYRICS_SERVER_URL: ${{ vars.LYRICS_SERVER_URL }}
+        run: |
+          python3 - <<'PY_CONFIG'
+          import os
+          from urllib.parse import urlsplit
+          value = os.environ.get('LYRICS_SERVER_URL', '').strip()
+          if not value:
+              message = 'LYRICS_SERVER_URL is empty: server sources DISABLED; APK uses LRCLIB and lyrics.ovh only.'
+              print('::warning::' + message)
+          else:
+              try:
+                  url = urlsplit(value)
+                  valid = (url.scheme == 'https' and bool(url.hostname) and not url.username
+                           and not url.password and not url.query and not url.fragment
+                           and url.port in (None, 443) and not any(c.isspace() for c in value))
+              except ValueError:
+                  valid = False
+              if not valid:
+                  raise SystemExit('Invalid LYRICS_SERVER_URL: expected HTTPS base URL without credentials/query/fragment on port 443')
+              message = 'Lyrics server URL configured. Availability, upstream access and catalogue coverage still require deployment testing.'
+              print('::notice::' + message)
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              summary.write('### Lyrics configuration\n' + message + '\n')
+          PY_CONFIG
+
+      - name: Lyrics server unit tests (no network or audio)
+        working-directory: ${{ env.PROJECT_ROOT }}
+        run: python3 -m unittest discover -s lyrics_server/tests -v
+
+      - name: JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Cloud library decision policy
+        working-directory: ${{ env.PROJECT_ROOT }}
+        run: python3 tools/test_library_6530.py
+
+      - name: Gradle 8.11.1
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+          cache-read-only: false
+
+      - name: Android verification policy
+        run: |
+          echo '### Android verification' >> "$GITHUB_STEP_SUMMARY"
+          echo 'APK job runs compilation and JVM checks, not emulator tests. Android verification is NOT implied by a green APK job.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'To run API 28/35 separately, use Run workflow and enable run_camera_tests.' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Kotlin compile and JVM tests
+        working-directory: ${{ env.PROJECT_ROOT }}
+        run: |
+          set -o pipefail
+          gradle --no-daemon :app:testDebugUnitTest --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/unit-tests.log"
+
+      - name: Upload JVM test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jvm-test-reports
+          path: |
+            unit-tests.log
+            _src/**/app/build/reports/tests/
+            _src/**/app/build/test-results/
+          if-no-files-found: ignore
+
+      # Хранилище ключа едет в секретах как base64: бинарь в секрет иначе не положить.
+      # На теге и на релизе отсутствие ключа — это ошибка, а не предупреждение: debug-APK,
+      # выложенный как релиз, потом не даст установить нормально подписанное обновление.
+      - name: Decode keystore
+        id: keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          if [ -z "${KEYSTORE_B64:-}" ]; then
+            if [ "${{ github.event_name }}" = "release" ] || [[ "${{ github.ref }}" == refs/tags/* ]]; then
+              echo "::error::SIGNING_KEYSTORE_BASE64 не задан, а это релизная сборка — останавливаюсь"
+              exit 1
+            fi
+            echo "::warning::SIGNING_KEYSTORE_BASE64 не задан — APK уйдёт на debug-ключ (только для проверки сборки)"
+            exit 0
+          fi
+          printf '%s' "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          echo "path=$RUNNER_TEMP/release.jks" >> "$GITHUB_OUTPUT"
+          ls -l "$RUNNER_TEMP/release.jks"
+
+      # continue-on-error здесь нет намеренно: зелёная галочка на провалившейся сборке
+      # хуже отсутствия CI, потому что учит доверять галочке.
+      - name: Validate account release configuration
+        working-directory: ${{ env.PROJECT_ROOT }}
+        env:
+          ACCOUNT_URL: ${{ vars.ACCOUNT_URL }}
+          GOOGLE_WEB_CLIENT_ID: ${{ vars.GOOGLE_WEB_CLIENT_ID }}
+          SIGNING_STORE_FILE: ${{ steps.keystore.outputs.path }}
+        run: python3 tools/check_account_release.py
+
+      - name: Assemble release
+        working-directory: ${{ env.PROJECT_ROOT }}
+        env:
+          SIGNING_STORE_FILE: ${{ steps.keystore.outputs.path }}
+          SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
+          SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
+          LYRICS_SERVER_URL: ${{ vars.LYRICS_SERVER_URL }}
+          RESOLVER_URL: ${{ vars.RESOLVER_URL }}
+          RESOLVER_TOKEN: ${{ secrets.RESOLVER_TOKEN }}
+          # 6.24.1: без этой строки BuildConfig.DEV_UNLOCK_HASH пустой и служебный доступ
+          # (6.17.0) в собранном APK физически не работает. Секрета нет — это нормально,
+          # просто в релизе не будет служебных строк; но молча терять функцию нельзя.
+          DEV_UNLOCK_CODE: ${{ secrets.DEV_UNLOCK_CODE }}
+          ACCOUNT_URL: ${{ vars.ACCOUNT_URL }}
+          GOOGLE_WEB_CLIENT_ID: ${{ vars.GOOGLE_WEB_CLIENT_ID }}
+        run: |
+          set -o pipefail
+          gradle --no-daemon :app:assembleRelease --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
+
+      - name: Error summary
+        if: failure()
+        run: |
+          logs=()
+          shopt -s nullglob
+          for file in unit-tests.log instrumentation-build.log build.log "${PROJECT_ROOT:-_src}"/build/ci/android-api-*/gradle.log "${PROJECT_ROOT:-_src}"/build/ci/android-api-*/completeness.json; do
+            if [ -f "$file" ]; then logs+=("$file"); fi
+          done
+          if [ "${#logs[@]}" -eq 0 ]; then exit 0; fi
+          {
+            echo "## Что сломалось"
+            echo '```'
+            grep -nHE "^e: |error:|Unresolved reference|Caused by|What went wrong|FAILURE:|Execution failed for task|device.*not found|Test run failed|Missing tests|Unsuccessful test|nonempty system-err" "${logs[@]}" | head -n 60 || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Проверка, а не украшение: apksigner называет владельца сертификата.
+      - name: Verify signature
+        run: |
+          set -euo pipefail
+          apk=$(find "$PROJECT_ROOT/app/build/outputs/apk/release" -name '*.apk' | head -1)
+          signer=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | tail -1)
+          "$signer" verify --print-certs "$apk" > "$RUNNER_TEMP/zizi-signature.txt"
+          grep -E 'certificate DN|SHA-1|SHA-256' "$RUNNER_TEMP/zizi-signature.txt" || true
+          if grep -q 'CN=Android Debug' "$RUNNER_TEMP/zizi-signature.txt"; then
+            if [ "${{ github.event_name }}" = "release" ] || [[ "${{ github.ref }}" == refs/tags/* ]]; then
+              echo "::error::APK подписан debug-ключом — такой релиз выкладывать нельзя"
+              exit 1
+            fi
+            echo "::warning::APK подписан debug-ключом"
+          else
+            echo "::notice::подпись релизная"
+          fi
+
+      - name: Rename artifact
+        run: |
+          set -euo pipefail
+          apk=$(find "$PROJECT_ROOT/app/build/outputs/apk/release" -name '*.apk' | head -1)
+          cp "$apk" "ZiziPlayer-v${APP_VERSION}.apk"
+          ls -lh ZiziPlayer-v*.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ZiziPlayer-APK-v${{ env.APP_VERSION }}
+          path: ZiziPlayer-v*.apk
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: |
+            build.log
+            instrumentation-build.log
+          if-no-files-found: ignore
+          retention-days: 30
+
+      # Один шаг на три сценария: push тега, публикация релиза через веб-морду,
+      # и ручной догон уже существующего релиза (attach_to_tag).
+      - name: Determine release tag
+        id: rel
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          ATTACH_TAG: ${{ inputs.attach_to_tag }}
+        run: |
+          set -euo pipefail
+          tag=""
+          case "$EVENT_NAME" in
+            push) if [ "$REF_TYPE" = "tag" ]; then tag="$REF_NAME"; fi ;;
+            release) tag="$RELEASE_TAG" ;;
+            workflow_dispatch) tag="$ATTACH_TAG" ;;
+          esac
+          if [ -n "$tag" ] && ! [[ "$tag" =~ ^v[0-9][A-Za-z0-9._+-]*$ ]]; then
+            echo "::error::Refusing non-Android release tag."
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          [ -n "$tag" ] && echo "::notice::APK поедет в релиз $tag" || echo "::notice::релиз не трогаю, APK только в артефактах"
+
+      - name: Attach APK to release
+        if: steps.rel.outputs.tag != ''
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.rel.outputs.tag }}
+          files: ZiziPlayer-v*.apk
+          fail_on_unmatched_files: true
