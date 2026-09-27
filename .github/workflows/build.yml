@@ -1,9 +1,7 @@
 name: Build & release ZiziPlayer APK
-
 # Репозиторий устроен как «код лежит в zip-архиве в корне». Поэтому workflow сначала
 # распаковывает самый свежий zip, а потом собирает проект из него. Workflow, лежащий
 # ВНУТРИ zip, GitHub никогда не запускает: он читает только .github/workflows в корне.
-
 on:
   workflow_dispatch:
     inputs:
@@ -69,7 +67,6 @@ jobs:
           import shutil
           import stat
           import zipfile
-          
           candidates = []
           for path in sorted(Path('.').glob('*.zip')):
               try:
@@ -116,9 +113,9 @@ jobs:
                   if (n.is_absolute() or '..' in n.parts or '\\' in info.filename
                           or any(c in info.filename for c in '\r\n') or stat.S_ISLNK(mode)):
                       raise SystemExit('Unsafe archive entry')
-              shutil.rmtree('_src', ignore_errors=True)
-              Path('_src').mkdir()
-              z.extractall('_src')
+          shutil.rmtree('_src', ignore_errors=True)
+          Path('_src').mkdir()
+          z.extractall('_src')
           root = '_src/' + prefix.rstrip('/') if prefix else '_src'
           with open(os.environ['GITHUB_ENV'], 'a') as out:
               out.write('PROJECT_ROOT=' + root + '\nAPP_VERSION=' + version + '\n')
@@ -273,6 +270,13 @@ jobs:
             _src/**/app/build/test-results/
           if-no-files-found: ignore
 
+      # Build both APKs before the emulator competes with Kotlin/D8 for memory.
+      - name: Assemble instrumentation APKs before starting Android
+        working-directory: ${{ env.PROJECT_ROOT }}
+        run: |
+          set -o pipefail
+          gradle --no-daemon --max-workers=2 :app:assembleDebug :app:assembleDebugAndroidTest --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/instrumentation-build.log"
+
       # 6.69.2: compiling androidTest is NOT executing it. API 28 catches cutout
       # linkage regressions; API 35 also exercises the system Path adapter.
       # These run before signing/assembling/publishing the release. No continue-on-error.
@@ -289,12 +293,17 @@ jobs:
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 28
+          avd-name: zizi-camera-api28
+          force-avd-creation: true
+          cores: 2
+          ram-size: 2048M
+          heap-size: 256M
           arch: x86_64
           target: google_apis
           disable-animations: true
           working-directory: ${{ env.PROJECT_ROOT }}
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front none
-          script: gradle --no-daemon :app:connectedDebugAndroidTest --rerun-tasks -Pandroid.testInstrumentationRunnerArguments.class=app.ziziplayer.ui.CameraCutout6692Test,app.ziziplayer.ui.CameraMorph6692UiTest,app.ziziplayer.ui.CollectionHeader6600Test,app.ziziplayer.ui.CollectionHeader6601Test,app.ziziplayer.ui.CollectionHeader6602Test --stacktrace
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -feature -Vulkan -noaudio -no-boot-anim -camera-back none -camera-front none
+          script: bash tools/run_camera_ci.sh 28
 
       - name: Upload Android API 28 results
         if: always() && steps.camera_api28.outcome != 'skipped'
@@ -302,6 +311,7 @@ jobs:
         with:
           name: camera-collection-api-28
           path: |
+            _src/**/build/ci/android-api-28/
             _src/**/app/build/reports/androidTests/
             _src/**/app/build/outputs/androidTest-results/
           if-no-files-found: warn
@@ -312,12 +322,17 @@ jobs:
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
+          avd-name: zizi-camera-api35
+          force-avd-creation: true
+          cores: 2
+          ram-size: 2048M
+          heap-size: 256M
           arch: x86_64
           target: google_apis
           disable-animations: true
           working-directory: ${{ env.PROJECT_ROOT }}
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front none
-          script: gradle --no-daemon :app:connectedDebugAndroidTest --rerun-tasks -Pandroid.testInstrumentationRunnerArguments.class=app.ziziplayer.ui.CameraCutout6692Test,app.ziziplayer.ui.CameraMorph6692UiTest,app.ziziplayer.ui.CollectionHeader6600Test,app.ziziplayer.ui.CollectionHeader6601Test,app.ziziplayer.ui.CollectionHeader6602Test --stacktrace
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -feature -Vulkan -noaudio -no-boot-anim -camera-back none -camera-front none
+          script: bash tools/run_camera_ci.sh 35
 
       - name: Upload Android API 35 results
         if: always() && steps.camera_api35.outcome != 'skipped'
@@ -325,6 +340,7 @@ jobs:
         with:
           name: camera-collection-api-35
           path: |
+            _src/**/build/ci/android-api-35/
             _src/**/app/build/reports/androidTests/
             _src/**/app/build/outputs/androidTest-results/
           if-no-files-found: warn
@@ -384,14 +400,15 @@ jobs:
         if: failure()
         run: |
           logs=()
-          for file in unit-tests.log build.log; do
+          shopt -s nullglob
+          for file in unit-tests.log instrumentation-build.log build.log "${PROJECT_ROOT:-_src}"/build/ci/android-api-*/gradle.log "${PROJECT_ROOT:-_src}"/build/ci/android-api-*/completeness.json; do
             if [ -f "$file" ]; then logs+=("$file"); fi
           done
           if [ "${#logs[@]}" -eq 0 ]; then exit 0; fi
           {
             echo "## Что сломалось"
             echo '```'
-            grep -nHE "^e: |error:|Unresolved reference|Caused by|What went wrong|FAILURE:|Execution failed for task" "${logs[@]}" | head -n 60 || true
+            grep -nHE "^e: |error:|Unresolved reference|Caused by|What went wrong|FAILURE:|Execution failed for task|device.*not found|Test run failed|Missing tests|Unsuccessful test|nonempty system-err" "${logs[@]}" | head -n 60 || true
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -404,67 +421,4 @@ jobs:
           "$signer" verify --print-certs "$apk" > "$RUNNER_TEMP/zizi-signature.txt"
           grep -E 'certificate DN|SHA-1|SHA-256' "$RUNNER_TEMP/zizi-signature.txt" || true
           if grep -q 'CN=Android Debug' "$RUNNER_TEMP/zizi-signature.txt"; then
-            if [ "${{ github.event_name }}" = "release" ] || [[ "${{ github.ref }}" == refs/tags/* ]]; then
-              echo "::error::APK подписан debug-ключом — такой релиз выкладывать нельзя"
-              exit 1
-            fi
-            echo "::warning::APK подписан debug-ключом"
-          else
-            echo "::notice::подпись релизная"
-          fi
-
-      - name: Rename artifact
-        run: |
-          set -euo pipefail
-          apk=$(find "$PROJECT_ROOT/app/build/outputs/apk/release" -name '*.apk' | head -1)
-          cp "$apk" "ZiziPlayer-v${APP_VERSION}.apk"
-          ls -lh ZiziPlayer-v*.apk
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ZiziPlayer-APK-v${{ env.APP_VERSION }}
-          path: ZiziPlayer-v*.apk
-          if-no-files-found: error
-          retention-days: 90
-
-      - name: Upload build log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-log
-          path: build.log
-          if-no-files-found: ignore
-          retention-days: 30
-
-      # Один шаг на три сценария: push тега, публикация релиза через веб-морду,
-      # и ручной догон уже существующего релиза (attach_to_tag).
-      - name: Determine release tag
-        id: rel
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          REF_TYPE: ${{ github.ref_type }}
-          REF_NAME: ${{ github.ref_name }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
-          ATTACH_TAG: ${{ inputs.attach_to_tag }}
-        run: |
-          set -euo pipefail
-          tag=""
-          case "$EVENT_NAME" in
-            push) if [ "$REF_TYPE" = "tag" ]; then tag="$REF_NAME"; fi ;;
-            release) tag="$RELEASE_TAG" ;;
-            workflow_dispatch) tag="$ATTACH_TAG" ;;
-          esac
-          if [ -n "$tag" ] && ! [[ "$tag" =~ ^v[0-9][A-Za-z0-9._+-]*$ ]]; then
-            echo "::error::Refusing non-Android release tag."
-            exit 1
-          fi
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          [ -n "$tag" ] && echo "::notice::APK поедет в релиз $tag" || echo "::notice::релиз не трогаю, APK только в артефактах"
-
-      - name: Attach APK to release
-        if: steps.rel.outputs.tag != ''
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.rel.outputs.tag }}
-          files: ZiziPlayer-v*.apk
-          fail_on_unmatched_files: true
+            if [ "${{ github.event_name }}" = "r
