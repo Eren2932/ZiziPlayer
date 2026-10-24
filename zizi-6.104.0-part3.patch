@@ -1,0 +1,449 @@
+diff --git a/app/src/main/java/app/ziziplayer/ui/screens/SharedSheetLayout.kt b/app/src/main/java/app/ziziplayer/ui/screens/SharedSheetLayout.kt
+index 4f69d45..0e43b19 100644
+--- a/app/src/main/java/app/ziziplayer/ui/screens/SharedSheetLayout.kt
++++ b/app/src/main/java/app/ziziplayer/ui/screens/SharedSheetLayout.kt
+@@ -7,24 +7,40 @@ import androidx.compose.foundation.lazy.LazyListState
+ import androidx.compose.foundation.lazy.rememberLazyListState
+ import androidx.compose.runtime.Composable
+ import androidx.compose.ui.Modifier
++import androidx.compose.ui.platform.LocalConfiguration
+ import androidx.compose.ui.unit.dp
+ 
+ /** A single bounded scroll owner, including title/search; actions remain above the IME.
+  * Header-in-list is intentional: with a large font and landscape IME a fixed header alone
+  * could otherwise consume the entire viewport. Never nest this list in verticalScroll.
++ * 6.104.0: weight(1f, fill = false) + heightIn(max = ...) adapts compact sheets (e.g. 2 members
++ * or rename) to their actual content height instead of stretching every sheet to 94% of the screen.
+  */
+ @Composable
+ internal fun SharedSheetLayout(
+     onDismiss: () -> Unit,
+     dismissEnabled: Boolean = true,
++    maxHeightFraction: Float = 0.82f,
+     listState: LazyListState = rememberLazyListState(),
+-    footer: @Composable ColumnScope.() -> Unit = {},
++    footer: (@Composable ColumnScope.() -> Unit)? = null,
+     content: LazyListScope.() -> Unit
+ ) {
+-    ZiziSheetScaffold(onDismiss = onDismiss, scrollable = false,
+-        modifier = Modifier.fillMaxHeight(0.94f), bottomSpacing = 8.dp, dismissEnabled = dismissEnabled) {
+-        LazyColumn(Modifier.fillMaxWidth().weight(1f), state = listState,
+-            contentPadding = PaddingValues(bottom = 12.dp), content = content)
+-        Column(Modifier.fillMaxWidth().padding(horizontal = 22.dp, vertical = 8.dp), content = footer)
++    val maxSheetHeight = (LocalConfiguration.current.screenHeightDp * maxHeightFraction).dp
++    ZiziSheetScaffold(
++        onDismiss = onDismiss,
++        scrollable = false,
++        modifier = Modifier.fillMaxWidth().widthIn(max = 520.dp).heightIn(max = maxSheetHeight),
++        bottomSpacing = if (footer != null) 6.dp else 12.dp,
++        dismissEnabled = dismissEnabled
++    ) {
++        LazyColumn(
++            Modifier.fillMaxWidth().weight(1f, fill = false),
++            state = listState,
++            contentPadding = PaddingValues(bottom = if (footer != null) 8.dp else 4.dp),
++            content = content
++        )
++        if (footer != null) {
++            Column(Modifier.fillMaxWidth().padding(horizontal = 22.dp, vertical = 6.dp), content = footer)
++        }
+     }
+ }
+diff --git a/app/src/main/java/app/ziziplayer/ui/theme/ArtworkTopMath.java b/app/src/main/java/app/ziziplayer/ui/theme/ArtworkTopMath.java
+index f4b2efe..b677b58 100644
+--- a/app/src/main/java/app/ziziplayer/ui/theme/ArtworkTopMath.java
++++ b/app/src/main/java/app/ziziplayer/ui/theme/ArtworkTopMath.java
+@@ -192,6 +192,97 @@ public final class ArtworkTopMath {
+         return pack(hsvToRgb(h, s, lo));
+     }
+ 
++    /**
++     * 6.104.0: Calibrated header tint for a 2x2 mosaic cover (up to 4 quadrant top colours).
++     * Top-row quadrants (indices 0, 1) border the upper backdrop gradient and receive higher
++     * spatial weight; vivid quadrants outvote monochrome/grey tiles so B&W covers in a 2x2 grid
++     * do not wash out a colourful neighbour; angular clustering prevents opposite hues from
++     * cancelling into grey mud. Always bounded by {@link #COLLECTION_LUMINANCE_CEILING}.
++     */
++    public static int mosaicCollectionTop(int[] tops) {
++        if (tops == null || tops.length == 0) return 0xff292929;
++        final int count = Math.min(tops.length, 4);
++        final double[] hues = new double[count];
++        final double[] sats = new double[count];
++        final double[] vals = new double[count];
++        final double[] weights = new double[count];
++        double totalChromatic = 0.0;
++        for (int i = 0; i < count; i++) {
++            final int c = tops[i];
++            if (c == 0) continue;
++            final double r = ((c >> 16) & 0xff) / 255.0;
++            final double g = ((c >> 8) & 0xff) / 255.0;
++            final double b = (c & 0xff) / 255.0;
++            final double mx = Math.max(r, Math.max(g, b));
++            final double mn = Math.min(r, Math.min(g, b));
++            final double d = mx - mn;
++            final double s = mx > 0 ? d / mx : 0.0;
++            double h = 0.0;
++            if (d > 0) {
++                if (mx == r) h = ((g - b) / d) % 6.0;
++                else if (mx == g) h = (b - r) / d + 2.0;
++                else h = (r - g) / d + 4.0;
++                h *= 60.0;
++                if (h < 0) h += 360.0;
++            }
++            hues[i] = h;
++            sats[i] = s;
++            vals[i] = mx;
++            final double spatial = (i < 2) ? 1.35 : 1.0;
++            final double chroma = s >= 0.08 && mx >= 0.12
++                ? Math.pow(s, 1.35) * (0.25 + 0.75 * mx)
++                : 0.0;
++            weights[i] = spatial * chroma;
++            totalChromatic += weights[i];
++        }
++        if (totalChromatic <= 1e-6) {
++            double vSum = 0.0;
++            int valid = 0;
++            for (int i = 0; i < count; i++) {
++                if (tops[i] != 0) { vSum += vals[i]; valid++; }
++            }
++            if (valid == 0) return 0xff292929;
++            final double v = Math.max(FLOOR / 255.0, Math.min(0.28, vSum / valid * 0.55));
++            return collectionTop(pack(hsvToRgb(0.0, 0.0, v)));
++        }
++        int anchor = 0;
++        double bestCluster = -1.0;
++        for (int i = 0; i < count; i++) {
++            if (weights[i] <= 0) continue;
++            double score = 0.0;
++            for (int j = 0; j < count; j++) {
++                if (weights[j] <= 0) continue;
++                final double diff = hueDistance(hues[i], hues[j]);
++                if (diff <= 75.0) {
++                    score += weights[j] * Math.cos(Math.toRadians(diff));
++                }
++            }
++            if (score > bestCluster) {
++                bestCluster = score;
++                anchor = i;
++            }
++        }
++        double sx = 0.0, sy = 0.0, ss = 0.0, sv = 0.0, sw = 0.0;
++        for (int j = 0; j < count; j++) {
++            if (weights[j] <= 0) continue;
++            final double diff = hueDistance(hues[anchor], hues[j]);
++            if (diff > 75.0) continue;
++            final double w = weights[j] * Math.max(0.15, Math.cos(Math.toRadians(diff)));
++            final double rad = Math.toRadians(hues[j]);
++            sx += w * Math.sin(rad);
++            sy += w * Math.cos(rad);
++            ss += w * sats[j];
++            sv += w * vals[j];
++            sw += w;
++        }
++        if (sw <= 1e-9) return collectionTop(tops[anchor]);
++        double h = Math.toDegrees(Math.atan2(sx, sy));
++        if (h < 0) h += 360.0;
++        final double s = Math.min(1.0, ss / sw);
++        final double v = Math.max(V_LOW, Math.min(V_HIGH, sv / sw));
++        return collectionTop(capLightness(hsvToRgb(h, s, v)));
++    }
++
+     /** Modal / card surface tinted by the player top (replaces the primary-based legacy surface). */
+     public static int surface(int top) { return ArtworkColorMath.mix(0xff121212, top, .12f); }
+ 
+diff --git a/app/src/test/java/app/ziziplayer/ui/SharedCover6104Checks.java b/app/src/test/java/app/ziziplayer/ui/SharedCover6104Checks.java
+new file mode 100644
+index 0000000..c707cac
+--- /dev/null
++++ b/app/src/test/java/app/ziziplayer/ui/SharedCover6104Checks.java
+@@ -0,0 +1,58 @@
++package app.ziziplayer.ui;
++
++import app.ziziplayer.ui.theme.ArtworkTopMath;
++
++/** 6.104.0. Production math for the shared-playlist cover: linear fade at fixed size and 2x2 mosaic tint. */
++public final class SharedCover6104Checks {
++    private static int checks;
++    private static void ok(boolean c, String m) { checks++; if (!c) throw new AssertionError(m); }
++    private static double lum(int c) {
++        return .2126 * ((c >> 16) & 255) / 255.0 + .7152 * ((c >> 8) & 255) / 255.0 + .0722 * (c & 255) / 255.0;
++    }
++    private static int hueOf(int c) {
++        float r = ((c >> 16) & 255), g = ((c >> 8) & 255), b = (c & 255);
++        float mx = Math.max(r, Math.max(g, b)), mn = Math.min(r, Math.min(g, b));
++        if (mx == mn) return -1;
++        float d = mx - mn, h;
++        if (mx == r) h = ((g - b) / d) % 6f; else if (mx == g) h = (b - r) / d + 2f; else h = (r - g) / d + 4f;
++        h *= 60f; if (h < 0) h += 360f; return Math.round(h);
++    }
++
++    public static void main(String[] args) {
++        final float span = 610f;
++        ok(CollectionCollapseMath.fixedCoverAlpha(0f, span) == 1f, "rest = fully visible");
++        ok(CollectionCollapseMath.fixedCoverAlpha(-40f, span) == 1f, "overscroll (reveal) never dims the cover");
++        ok(Math.abs(CollectionCollapseMath.fixedCoverAlpha(305f, span) - 0.5f) < 1e-6, "half span = half alpha");
++        ok(CollectionCollapseMath.fixedCoverAlpha(610f, span) == 0f, "gone exactly at the toolbar edge");
++        ok(CollectionCollapseMath.fixedCoverAlpha(5000f, span) == 0f, "stays gone");
++        ok(CollectionCollapseMath.fixedCoverAlpha(Float.NaN, span) == 1f, "NaN scroll is safe");
++        ok(CollectionCollapseMath.fixedCoverAlpha(10f, 0f) == 0f, "degenerate span is safe");
++        float last = 1f;
++        for (int s = 0; s <= 700; s += 5) {
++            float a = CollectionCollapseMath.fixedCoverAlpha(s, span);
++            ok(a <= last + 1e-6f && a >= 0f && a <= 1f, "monotone non-increasing within 0..1");
++            last = a;
++        }
++
++        final int red = 0xff9c1616, blue = 0xff1075ad, grey = 0xff808080, dark = 0xff202020;
++        int one = ArtworkTopMath.mosaicCollectionTop(new int[]{red, red, red, red});
++        ok(Math.abs(hueOf(one) - hueOf(red)) <= 4, "uniform tiles keep their hue");
++        int mixed = ArtworkTopMath.mosaicCollectionTop(new int[]{red, grey, dark, grey});
++        ok(Math.abs(hueOf(mixed) - hueOf(red)) <= 4, "one vivid tile beats grey tiles");
++        int mud = ArtworkTopMath.mosaicCollectionTop(new int[]{red, blue, red, blue});
++        ok(hueOf(mud) >= 0, "opposite hues must not average into grey");
++        int neutral = ArtworkTopMath.mosaicCollectionTop(new int[]{grey, grey, dark, 0xff505050});
++        ok(hueOf(neutral) == -1 || ((neutral >> 16) & 255) == ((neutral >> 8) & 255), "all-grey stays neutral");
++        ok(ArtworkTopMath.mosaicCollectionTop(new int[]{0, 0, 0, 0}) == 0xff292929, "nothing decoded yet = default tint");
++        ok(ArtworkTopMath.mosaicCollectionTop(null) == 0xff292929, "null is safe");
++        ok(ArtworkTopMath.mosaicCollectionTop(new int[]{red, 0, 0, 0}) != 0xff292929, "partial decode already tints");
++        // Top row borders the backdrop gradient: it decides a 2-vs-2 split.
++        int topBlue = ArtworkTopMath.mosaicCollectionTop(new int[]{blue, blue, red, red});
++        int topRed = ArtworkTopMath.mosaicCollectionTop(new int[]{red, red, blue, blue});
++        ok(Math.abs(hueOf(topBlue) - hueOf(blue)) <= 6 && Math.abs(hueOf(topRed) - hueOf(red)) <= 6, "top row wins a 2-2 split");
++        for (int[] tiles : new int[][]{{red, blue, grey, dark}, {blue, blue, blue, blue}, {0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff}, {0xffffff00, 0xff00ffff, 0xffff00ff, 0xff00ff00}}) {
++            ok(lum(ArtworkTopMath.mosaicCollectionTop(tiles)) <= 0.40, "header tint stays dark enough for white text");
++        }
++        System.out.println("SharedCover6104Checks OK: " + checks + " assertions");
++    }
++}
+diff --git a/tools/check_selftest.py b/tools/check_selftest.py
+index ca618c8..7c04727 100644
+--- a/tools/check_selftest.py
++++ b/tools/check_selftest.py
+@@ -120,7 +120,7 @@ def main():
+     # Run UI source contracts here too, so uploading only the ZIP does not leave new
+     # regressions disconnected from CI. These are NOT Compose / Kotlin execution tests.
+     if not failed:
+-        for name in ('test_shared_6103.py', 'test_buildfix_61021.py', 'test_shared_ui_6102.py', 'test_lyrics_sync_6100.py', 'test_lyrics_visuals_6970.py', 'test_collection_tools_6960.py', 'test_download_library_6952.py', 'test_neutral_navigation_6950.py', 'test_reference_motion_6940.py', 'test_headset_icon_6823.py', 'test_playback_6822.py', 'test_playback_6822_contracts.py', 'test_player_brand_6751_contracts.py', 'test_search_6760.py', 'test_search_6770.py', 'test_search_menu_6771.py', 'test_search_6780.py', 'test_search_6790.py', 'test_hub_6900.py', 'test_audio_output_6750.py', 'test_audio_output_6750_contracts.py', 'test_library_6710.py', 'test_library_6711.py', 'test_library_6712.py', 'test_library_6713.py', 'test_resolver_6650.py', 'test_live_ui_contracts.py', 'test_menu_ui_contracts.py',
++        for name in ('test_shared_6104.py', 'test_shared_6103.py', 'test_buildfix_61021.py', 'test_shared_ui_6102.py', 'test_lyrics_sync_6100.py', 'test_lyrics_visuals_6970.py', 'test_collection_tools_6960.py', 'test_download_library_6952.py', 'test_neutral_navigation_6950.py', 'test_reference_motion_6940.py', 'test_headset_icon_6823.py', 'test_playback_6822.py', 'test_playback_6822_contracts.py', 'test_player_brand_6751_contracts.py', 'test_search_6760.py', 'test_search_6770.py', 'test_search_menu_6771.py', 'test_search_6780.py', 'test_search_6790.py', 'test_hub_6900.py', 'test_audio_output_6750.py', 'test_audio_output_6750_contracts.py', 'test_library_6710.py', 'test_library_6711.py', 'test_library_6712.py', 'test_library_6713.py', 'test_resolver_6650.py', 'test_live_ui_contracts.py', 'test_menu_ui_contracts.py',
+                      'test_artwork_ui_contracts.py', 'test_artwork_color_math.py',
+                      'test_lyrics_palette_6720.py', 'test_lyrics_palette_6720_contracts.py',
+                      'test_lyrics_preview_6800.py', 'test_lyrics_preview_6800_contracts.py',
+diff --git a/tools/check_shared_keys.py b/tools/check_shared_keys.py
+index 83a718b..929c19a 100644
+--- a/tools/check_shared_keys.py
++++ b/tools/check_shared_keys.py
+@@ -63,6 +63,18 @@ def spread(count):
+     return out
+ 
+ 
++def prepend_sequence(first, count):
++    """6.104.0. Зеркало SharedKeys.prependSequence: пачка новых треков сверху, порядок внутри пачки сохранён."""
++    if count <= 0:
++        return []
++    out, cur = [], first or None
++    for _ in range(count):
++        cur = D[-1] if cur is None else build('', cur, 'down')
++        out.append(cur)
++    out.reverse()
++    return out
++
++
+ def insert_check(keys, i):
+     k = for_index(keys, i)
+     assert shared.valid_pos(k), k
+@@ -98,6 +110,20 @@ def main():
+                 assert build(a, b, 'mid') == shared.key_between(a, b)
+     print('random   20000: max len %d' % max(map(len, keys)))
+ 
++    # 6.104.0: «добавить» кладёт пачку НАД первым треком. Порядок внутри пачки = порядок выбора.
++    keys = []
++    for batch in [3, 1, 7, 2] * 380:  # 4940 треков — в пределах лимита 5000
++        top = keys[0] if keys else None
++        fresh = prepend_sequence(top, batch)
++        assert fresh == sorted(fresh) and len(set(fresh)) == batch, fresh
++        assert all(shared.valid_pos(k) for k in fresh), fresh
++        assert top is None or fresh[-1] < top, (fresh, top)
++        keys = fresh + keys
++    assert keys == sorted(keys) and len(set(keys)) == len(keys)
++    print('prepend batches %d tracks: max len %d' % (len(keys), max(map(len, keys))))
++    assert max(map(len, keys)) <= 128
++    assert prepend_sequence('1', 2) == sorted(prepend_sequence('1', 2)) and all(k < '1' for k in prepend_sequence('1', 2))
++
+     tie = ['V', 'k', 'k']
+     k = for_index(tie, 2)
+     assert shared.valid_pos(k) and k > 'k'
+diff --git a/tools/test_camera_morph_6692.py b/tools/test_camera_morph_6692.py
+index ac96ff4..e51c728 100644
+--- a/tools/test_camera_morph_6692.py
++++ b/tools/test_camera_morph_6692.py
+@@ -60,7 +60,10 @@ class CameraMorph6692(unittest.TestCase):
+         s=(SRC/'ui/screens/PinnedCollectionScaffold.kt').read_text()
+         self.assertEqual(s.count('LazyColumn('),1)
+         self.assertEqual(s.count('CollectionCoverMorphOverlay('),1)
+-        self.assertNotIn('{ artwork() }',s)
++        # 6.104.0: MORPH — картинка только в оверлее. Единственное место в списке — режим FIXED_FADE (общие плейлисты).
++        self.assertEqual(s.count('{ artwork() }'),1)
++        self.assertIn('if (fixedCover) Box(Modifier.fillMaxSize()', s)
++        self.assertLess(s.index('if (fixedCover) Box(Modifier.fillMaxSize()'), s.index('{ artwork() }'))
+         self.assertIn('fraction = { collapseState.fraction }, scroll = { scrollPx() }',s)
+         self.assertIn('.padding(top = status + toolbar * searchProgress)',s)
+         self.assertIn('.nestedScroll(connection)',s)
+diff --git a/tools/test_shared_6103.py b/tools/test_shared_6103.py
+index 659244d..2760c27 100644
+--- a/tools/test_shared_6103.py
++++ b/tools/test_shared_6103.py
+@@ -66,8 +66,11 @@ class Shared6103(unittest.TestCase):
+     def test_single_bounded_scroll_owner_and_pinned_actions(self):
+         layout = read('ui/screens/SharedSheetLayout.kt')
+         self.assertIn('scrollable = false', layout)
+-        self.assertIn('.fillMaxHeight(0.94f)', layout)
+-        self.assertIn('LazyColumn(Modifier.fillMaxWidth().weight(1f)', layout)
++        # 6.104.0: окно по высоте содержимого. Принудительные 94% экрана (даже для двух участников) запрещены.
++        self.assertNotIn('fillMaxHeight(', layout)
++        self.assertIn('.heightIn(max = maxSheetHeight)', layout)
++        self.assertIn('.widthIn(max = 520.dp)', layout)
++        self.assertIn('LazyColumn(\n            Modifier.fillMaxWidth().weight(1f, fill = false)', layout)
+         self.assertNotIn('.verticalScroll(', layout)
+         self.assertLess(layout.index('LazyColumn('), layout.index('content = footer'))
+         screens = read('ui/screens/SharedScreens.kt')
+@@ -97,10 +100,11 @@ class Shared6103(unittest.TestCase):
+ 
+     def test_search_uses_original_queue_position(self):
+         screens = read('ui/screens/SharedScreens.kt')
+-        self.assertIn('val (index, t) = entry', screens)
+-        self.assertIn('.fillMaxWidth().clickable { play(index) }', screens)
+-        self.assertIn('tracks.mapIndexedNotNull { i, t -> SharedRefs.toRemote', screens)
+-        self.assertIn('if (index >= 0) play(index)', screens)
++        # 6.104.0: очередь строится из показанных строк (после поиска/сортировки), индекс — позиция строки.
++        self.assertIn('itemsIndexed(rows, key = { _, entry -> entry.second.id }', screens)
++        self.assertIn('.fillMaxWidth().clickable { if (ready) playRows(rowIndex) }', screens)
++        self.assertIn('rows.mapIndexedNotNull { i, (_, t) -> SharedRefs.toRemote(t.ref, t.meta)?.let { i to it } }', screens)
++        self.assertIn('if (at >= 0) playRows(at)', screens)
+ 
+     def test_active_invite_choice_does_not_discard_a_working_link(self):
+         screens = read('ui/screens/SharedScreens.kt')
+diff --git a/tools/test_shared_6104.py b/tools/test_shared_6104.py
+new file mode 100644
+index 0000000..87e656a
+--- /dev/null
++++ b/tools/test_shared_6104.py
+@@ -0,0 +1,92 @@
++#!/usr/bin/env python3
++"""6.104.0. Общие плейлисты: падение «+», компактные окна, новые треки сверху, меню, обложка/поиск/сортировка."""
++from pathlib import Path
++import subprocess
++import tempfile
++import unittest
++
++ROOT = Path(__file__).resolve().parents[1]
++SRC = ROOT / 'app/src/main/java/app/ziziplayer'
++
++
++def read(rel):
++    return (SRC / rel).read_text(encoding='utf-8')
++
++
++class Shared6104(unittest.TestCase):
++    def test_plus_does_not_crash_on_local_artwork(self):
++        picker = read('ui/screens/SharedLibraryPicker.kt')
++        self.assertNotIn('RemoteArtwork(', picker)  # content:// у локальных файлов не должен попадать в OkHttp
++        self.assertIn('TrackArtwork(entry.track', picker)
++        http = read('data/remote/ZiziHttp.kt')
++        fetch = http.split('fun fetchBytes(', 1)[1].split('\n    }\n', 1)[0]
++        self.assertLess(fetch.index('startsWith("http://"'), fetch.index('Request.Builder()'))
++        self.assertLess(fetch.index('return try {'), fetch.index('.url(url)'))  # url() внутри try
++        self.assertIn('catch (e: IllegalArgumentException)', fetch)
++        art = read('ui/components/Artwork.kt')
++        self.assertIn('private fun validNetworkUrl(', art)
++        for fn in ('fun peekUrl(', 'suspend fun loadUrl(', 'private suspend fun fetchUrl('):
++            self.assertIn('validNetworkUrl(url)', art.split(fn, 1)[1].split('\n', 3)[1] + art.split(fn, 1)[1].split('\n', 3)[2], fn)
++
++    def test_sheets_hug_content(self):
++        layout = read('ui/screens/SharedSheetLayout.kt')
++        self.assertNotIn('fillMaxHeight(', layout)
++        self.assertIn('weight(1f, fill = false)', layout)
++        self.assertIn('heightIn(max = maxSheetHeight)', layout)
++
++    def test_new_tracks_land_on_top_for_everyone(self):
++        repo = read('shared/SharedRepository.kt')
++        self.assertIn('SharedKeys.prependSequence(view.firstOrNull()?.pos, accepted.size)', repo)
++        self.assertNotIn('SharedKeys.sequence(view.lastOrNull()?.pos, accepted.size)', repo)
++        keys = read('shared/SharedKeys.kt')
++        self.assertIn('fun prependSequence(first: String?, count: Int): List<String>', keys)
++        self.assertIn('out.reverse()', keys)  # порядок внутри пачки = порядок выбора
++
++    def test_track_menu_is_full_zizi_menu_plus_shared_actions(self):
++        screens = read('ui/screens/SharedScreens.kt')
++        self.assertIn('SearchTrackActionsHost(remote = menuRemote', screens)
++        for action in ('shared-play', 'shared-by', 'shared-top', 'shared-up', 'shared-down', 'shared-bottom', 'shared-remove'):
++            self.assertIn('"' + action + '"', screens)
++        host = read('ui/screens/SearchTrackActionsHost.kt')
++        self.assertIn('if (!action.local && prepared == null)', host)  # «Убрать/Выше» не пишут трек в медиатеку
++        self.assertIn('onOpenCollection: ((RemoteCollection) -> Unit)?', host)
++        # порядок меняется только в нефильтрованном виде: индекс «выше/ниже» относится к порядку плейлиста
++        self.assertIn('val unfiltered = sort == CollectionViewSort.ORIGINAL && query.isBlank() && !onlyMine', screens)
++        self.assertIn('val canArrange = role != ROLE_VIEWER && unfiltered', screens)
++
++    def test_header_cover_search_and_sort_use_collection_mechanics(self):
++        screens = read('ui/screens/SharedScreens.kt')
++        screen = screens.split('private fun SharedPlaylistScreen(', 1)[1].split('// ===', 1)[0]
++        self.assertIn('PinnedCollectionScaffold(', screen)
++        self.assertIn('coverMode = CollectionCoverMode.FIXED_FADE', screen)
++        self.assertIn('tools = CollectionTools(searchOpen, query, "Поиск в плейлисте"', screen)
++        self.assertIn('CollectionViewSortSheet(sort,', screen)
++        self.assertIn('CollectionSearchPolicy.filterAndSort(', screen)
++        self.assertIn('SharedMosaic(arts, pid, Modifier.fillMaxSize())', screen)
++        self.assertNotIn('SoftTextField(', screen)  # старое поле поиска внутри списка убрано
++        self.assertEqual(screen.count('LazyColumn('), 0)  # единственный список — в каркасе коллекций
++        scaffold = read('ui/screens/PinnedCollectionScaffold.kt')
++        self.assertIn('enum class CollectionCoverMode { MORPH, FIXED_FADE }', scaffold)
++        self.assertIn('coverMode: CollectionCoverMode = CollectionCoverMode.MORPH', scaffold)  # остальные экраны не затронуты
++        self.assertIn('val coverMin = if (fixedCover) coverMax else', scaffold)
++        self.assertIn('M.fixedCoverAlpha(scrollPx(), coverFadeSpanPx)', scaffold)
++        self.assertIn('if (!fixedCover) Box(Modifier.fillMaxSize().graphicsLayer { alpha = 1f - searchProgress })', scaffold)
++
++    def test_host_wiring(self):
++        self.assertIn('onShare = onShare, onOpenEqualizer = { eqOpen = true })', read('MainActivity.kt'))
++        self.assertIn('onShare: (TrackEntity) -> Unit,\n    onOpenEqualizer: () -> Unit', read('ui/screens/SharedScreens.kt'))
++
++    def test_production_math(self):
++        with tempfile.TemporaryDirectory(prefix='zizi-6104-') as out:
++            files = [SRC / 'ui/CollectionCollapseMath.java', SRC / 'ui/CollectionGeometry.java',
++                     SRC / 'ui/theme/ArtworkColorMath.java', SRC / 'ui/theme/ArtworkTopMath.java',
++                     SRC / 'ui/theme/LyricsColorMath.java',
++                     ROOT / 'app/src/test/java/app/ziziplayer/ui/SharedCover6104Checks.java']
++            subprocess.run(['java', 'com.sun.tools.javac.Main', '-source', '17', '-target', '17', '-d', out, *map(str, files)], check=True)
++            run = subprocess.run(['java', '-cp', out, 'app.ziziplayer.ui.SharedCover6104Checks'], check=True, capture_output=True, text=True)
++            self.assertIn('SharedCover6104Checks OK', run.stdout)
++            print(run.stdout.strip())
++
++
++if __name__ == '__main__':
++    unittest.main()
+diff --git a/tools/test_shared_ui_6102.py b/tools/test_shared_ui_6102.py
+index ff6b606..84fbb22 100644
+--- a/tools/test_shared_ui_6102.py
++++ b/tools/test_shared_ui_6102.py
+@@ -50,19 +50,18 @@ class Shared6102(unittest.TestCase):
+     def test_track_rows_and_control_bar(self):
+         s = read('ui/screens/SharedScreens.kt')
+         self.assertIn('.animateItem(', s)
+-        self.assertIn('.introFade(index, intro)', s)
++        self.assertIn('.introFade(rowIndex, intro)', s)
+         self.assertIn('TrackSubtitle(', s)
+         self.assertIn('rememberMicroAvatars(avatars)', s)
+         self.assertNotIn('добавил(а) $who', s)
+-        self.assertIn('widthIn(max = 420.dp)', s)
+         self.assertIn('CONTROL_SIZE', read('ui/screens/SharedUi.kt'))
+         self.assertIn('MicroAvatar(byId, byName, avatar)', read('ui/screens/SharedUi.kt'))
+         self.assertIn('size: Dp = 16.dp', read('ui/screens/SharedUi.kt'))
+ 
+     def test_playback_index_matches_player_queue(self):
+         s = read('ui/screens/SharedScreens.kt')
+-        self.assertIn('tracks.mapIndexedNotNull { i, t -> SharedRefs.toRemote(t.ref, t.meta)?.let { i to it } }', s)
+-        self.assertIn('if (index >= 0) play(index)', s)
++        self.assertIn('rows.mapIndexedNotNull { i, (_, t) -> SharedRefs.toRemote(t.ref, t.meta)?.let { i to it } }', s)
++        self.assertIn('if (at >= 0) playRows(at)', s)
+ 
+     def test_add_sheet_is_lazy(self):
+         s = read('ui/screens/SharedScreens.kt')

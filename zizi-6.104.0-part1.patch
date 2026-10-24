@@ -1,0 +1,404 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 694c16d..a88394a 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,3 +1,29 @@
++## 6.104.0 — 2026-10-24
++
++Общие плейлисты: перестроены. Падение при нажатии «+», окна по размеру содержимого,
++новые треки сверху у всех, полное меню трека, обложка/поиск/сортировка как в коллекциях.
++
++- **«+» больше не вылетает.** Причина: в списке «Добавить треки» обложка локального файла
++  (`content://…`) уходила в `ZiziHttp.fetchBytes`, а `Request.Builder().url()` стоял вне `try` и бросал
++  `IllegalArgumentException`. Строка использует `TrackArtwork`; `fetchBytes`/`statusOf`/`ArtworkCache`
++  принимают только http(s), исключение внутри `try`, ошибка загрузки обложки больше не роняет экран.
++- **Окна по размеру содержимого.** `SharedSheetLayout`: убраны принудительные 94% высоты; `weight(1f, fill = false)`
++  и `heightIn(max = 82% экрана)`, ширина не больше 520 dp. Два участника — маленькое окно, длинный список — скролл.
++- **Новые треки сверху.** `SharedKeys.prependSequence`: пачка получает ключи строго меньше первого, порядок внутри пачки
++  сохранён. Клиент и сервер сортируют по `pos`, поэтому у всех участников треки сразу вверху. Проверено на 4940 треках.
++- **Меню «⋯».** Полный набор Zizi (`SearchTrackActionsHost`): играть следующим, в очередь, избранное, плейлисты,
++  скачивание, FX, таймер, «поделиться», сведения. Плюс: «Слушать», «Добавил(а)…», «В начало/Выше/Ниже/В конец»
++  (только в исходном порядке без фильтра), «Убрать из общего плейлиста». Эти пункты не пишут трек в медиатеку.
++- **Экран плейлиста на `PinnedCollectionScaffold`.** Обложка держит размер (716 px на 1080), уезжает 1:1 и линейно
++  затухает (`CollectionCollapseMath.fixedCoverAlpha`); сверху проявляется плашка с названием. Поиск и сортировка:
++  `CollectionTools` + `CollectionViewSortSheet`, как в «Все треки»/«Плейлисты»/«Избранное». Очередь = показанные строки.
++- **Цвет шапки.** Мозаика 2x2 считается по четырём плиткам `ArtworkTopMath.mosaicCollectionTop` (верхний ряд весит
++  больше, цветные плитки перевешивают серые, противоположные оттенки не смешиваются в грязь).
++
++Только клиент; сервер не менялся.
++
++---
++
+ ## 6.102.0 — 2026-10-23
+ 
+ Общие плейлисты: экран больше не выбрасывает на главную после фона (пересоздание Activity при `restoring`), исправлены индекс
+diff --git a/app/build.gradle.kts b/app/build.gradle.kts
+index 2d8f4a8..5800f2f 100644
+--- a/app/build.gradle.kts
++++ b/app/build.gradle.kts
+@@ -23,8 +23,8 @@ android {
+         // релизов назад. На 36 меняется поведение только там, куда мы не ходим: у нас нет
+         // ни точных будильников, ни широковещательных приёмников для чужих приложений.
+         targetSdk = 36
+-        versionCode = 249
+-        versionName = "6.103.0"
++        versionCode = 250
++        versionName = "6.104.0"
+ 
+         /**
+          * Innertube's public web key.
+diff --git a/app/src/main/java/app/ziziplayer/MainActivity.kt b/app/src/main/java/app/ziziplayer/MainActivity.kt
+index cc4a833..784fdda 100644
+--- a/app/src/main/java/app/ziziplayer/MainActivity.kt
++++ b/app/src/main/java/app/ziziplayer/MainActivity.kt
+@@ -1072,7 +1072,8 @@ private fun ZiziApp(
+                         if (sharedUid != null) {
+                             SharedHost(vm = vm, state = library, uid = sharedUid, intent = sharedIntent,
+                                 onIntentConsumed = { sharedIntent = null }, onClose = { sharedOpen = false; sharedPid = null },
+-                                backEnabled = backOk, openPid = sharedPid, onOpenPid = { sharedPid = it })
++                                backEnabled = backOk, openPid = sharedPid, onOpenPid = { sharedPid = it },
++                                onShare = onShare, onOpenEqualizer = { eqOpen = true })
+                         } else {
+                             SharedRestoring(onBack = { sharedOpen = false; sharedPid = null }, backEnabled = backOk)
+                         }
+diff --git a/app/src/main/java/app/ziziplayer/data/remote/ZiziHttp.kt b/app/src/main/java/app/ziziplayer/data/remote/ZiziHttp.kt
+index 51f539e..a82595a 100644
+--- a/app/src/main/java/app/ziziplayer/data/remote/ZiziHttp.kt
++++ b/app/src/main/java/app/ziziplayer/data/remote/ZiziHttp.kt
+@@ -202,16 +202,21 @@ object ZiziHttp {
+     }
+ 
+     suspend fun statusOf(url: String, userAgent: String?): Int? = withContext(Dispatchers.IO) {
+-        val request = Request.Builder()
+-            .url(url)
+-            .get()
+-            .header("User-Agent", userAgent ?: USER_AGENT)
+-            .header("Range", "bytes=0-1")
+-            .build()
++        if (!url.startsWith("http://", ignoreCase = true) && !url.startsWith("https://", ignoreCase = true)) {
++            return@withContext null
++        }
+         try {
++            val request = Request.Builder()
++                .url(url)
++                .get()
++                .header("User-Agent", userAgent ?: USER_AGENT)
++                .header("Range", "bytes=0-1")
++                .build()
+             probeClient.newCall(request).execute().use { r -> r.code }
+         } catch (e: IOException) {
+             null
++        } catch (e: IllegalArgumentException) {
++            null
+         }
+     }
+ 
+@@ -221,16 +226,19 @@ object ZiziHttp {
+      * mean a second dispatch per tile.
+      */
+     fun fetchBytes(url: String, limitBytes: Int = 1_500_000): ByteArray? {
+-        val request = Request.Builder()
+-            .url(url)
+-            .get()
+-            .header("User-Agent", USER_AGENT)
+-            // 6.24.3. Обложка — единственный запрос в приложении, который можно не сделать.
+-            // Метка снимается в SessionHeadersInterceptor и в сеть не уходит; она нужна, чтобы
+-            // ожидание токена сессии для обложки было секундой, а не двенадцатью.
+-            .header(SessionRequestPolicy.deferrableHeader, "1")
+-            .build()
++        if (!url.startsWith("http://", ignoreCase = true) && !url.startsWith("https://", ignoreCase = true)) {
++            return null
++        }
+         return try {
++            val request = Request.Builder()
++                .url(url)
++                .get()
++                .header("User-Agent", USER_AGENT)
++                // 6.24.3. Обложка — единственный запрос в приложении, который можно не сделать.
++                // Метка снимается в SessionHeadersInterceptor и в сеть не уходит; она нужна, чтобы
++                // ожидание токена сессии для обложки было секундой, а не двенадцатью.
++                .header(SessionRequestPolicy.deferrableHeader, "1")
++                .build()
+             client.newCall(request).execute().use { r ->
+                 if (!r.isSuccessful) return null
+                 val body = r.body ?: return null
+@@ -253,6 +261,8 @@ object ZiziHttp {
+             }
+         } catch (e: IOException) {
+             null
++        } catch (e: IllegalArgumentException) {
++            null
+         }
+     }
+ 
+diff --git a/app/src/main/java/app/ziziplayer/shared/SharedKeys.kt b/app/src/main/java/app/ziziplayer/shared/SharedKeys.kt
+index 705da73..72e7665 100644
+--- a/app/src/main/java/app/ziziplayer/shared/SharedKeys.kt
++++ b/app/src/main/java/app/ziziplayer/shared/SharedKeys.kt
+@@ -81,6 +81,19 @@ object SharedKeys {
+         return out
+     }
+ 
++    /** [count] ключей подряд перед [first]: пачка «добавить в начало», чтобы новые треки сразу вставали сверху. */
++    fun prependSequence(first: String?, count: Int): List<String> {
++        if (count <= 0) return emptyList()
++        val out = ArrayList<String>(count)
++        var cur = first?.takeIf { it.isNotEmpty() }
++        repeat(count) {
++            cur = if (cur == null) DIGITS.last().toString() else before(cur!!)
++            out += cur!!
++        }
++        out.reverse()
++        return out
++    }
++
+     /** [count] равномерно разложенных ключей фиксированной ширины для нового плейлиста. */
+     fun spread(count: Int): List<String> {
+         if (count <= 0) return emptyList()
+diff --git a/app/src/main/java/app/ziziplayer/shared/SharedRepository.kt b/app/src/main/java/app/ziziplayer/shared/SharedRepository.kt
+index be75504..fb05006 100644
+--- a/app/src/main/java/app/ziziplayer/shared/SharedRepository.kt
++++ b/app/src/main/java/app/ziziplayer/shared/SharedRepository.kt
+@@ -267,7 +267,7 @@ class SharedRepository private constructor(private val context: Context) {
+             _messages.tryEmit(if (tracks.isNotEmpty() && room == 0) "В плейлисте уже 5000 треков" else "Эти треки уже есть в плейлисте")
+             return@withLock 0
+         }
+-        val keys = SharedKeys.sequence(view.lastOrNull()?.pos, accepted.size)
++        val keys = SharedKeys.prependSequence(view.firstOrNull()?.pos, accepted.size)
+         val now = System.currentTimeMillis()
+         database.withTransaction {
+             accepted.forEachIndexed { i, (ref, meta) ->
+diff --git a/app/src/main/java/app/ziziplayer/ui/CollectionCollapseMath.java b/app/src/main/java/app/ziziplayer/ui/CollectionCollapseMath.java
+index a6f8dae..3c6659b 100644
+--- a/app/src/main/java/app/ziziplayer/ui/CollectionCollapseMath.java
++++ b/app/src/main/java/app/ziziplayer/ui/CollectionCollapseMath.java
+@@ -26,6 +26,12 @@ public final class CollectionCollapseMath {
+         float travel = Float.isFinite(morphTravel) ? Math.max(1f, morphTravel) : 1f;
+         return Math.max(hero, travel);
+     }
++    /** 6.104.0: reference 213113 keeps full 716 px cover size and fades linearly with scroll. */
++    public static float fixedCoverAlpha(float scroll, float fadeSpan) {
++        if (!Float.isFinite(scroll) || scroll <= 0f) return 1f;
++        if (!Float.isFinite(fadeSpan) || fadeSpan <= 0f) return 0f;
++        return 1f - clamp(scroll / fadeSpan, 1f);
++    }
+     public static float banner(float scroll, float travel) {
+         float progress = clamp(scroll / Math.max(1f, travel), 1f);
+         return CollectionGeometry.smoothstep((progress - .65f) / .35f);
+diff --git a/app/src/main/java/app/ziziplayer/ui/components/Artwork.kt b/app/src/main/java/app/ziziplayer/ui/components/Artwork.kt
+index ea00102..71954f1 100644
+--- a/app/src/main/java/app/ziziplayer/ui/components/Artwork.kt
++++ b/app/src/main/java/app/ziziplayer/ui/components/Artwork.kt
+@@ -445,13 +445,16 @@ object ArtworkCache {
+      */
+     private fun urlId(url: String): String = "url:$url"
+ 
++    private fun validNetworkUrl(url: String?): String? =
++        url?.takeIf { it.startsWith("http://", ignoreCase = true) || it.startsWith("https://", ignoreCase = true) }
++
+     fun peekUrl(url: String?, px: Int): Art? {
+-        val target = url ?: return null
++        val target = validNetworkUrl(url) ?: return null
+         return memory.get(key(urlId(target), px))
+     }
+ 
+     suspend fun loadUrl(url: String?, px: Int): Art? {
+-        val target = url?.takeIf { it.isNotBlank() } ?: return null
++        val target = validNetworkUrl(url) ?: return null
+         val cacheKey = key(urlId(target), px)
+         memory.get(cacheKey)?.let { return it }
+         val task = synchronized(inflight) {
+@@ -461,11 +464,17 @@ object ArtworkCache {
+             }.also { inflight[cacheKey] = it }
+         }
+         task.start()
+-        return task.await()
++        return try {
++            task.await()
++        } catch (e: CancellationException) {
++            throw e
++        } catch (_: Throwable) {
++            null
++        }
+     }
+ 
+     private suspend fun fetchUrl(url: String?, px: Int): Art? {
+-        val target = url?.takeIf { it.isNotBlank() } ?: return null
++        val target = validNetworkUrl(url) ?: return null
+         val id = urlId(target)
+         val cacheKey = key(id, px)
+         memory.get(cacheKey)?.let { return it }
+diff --git a/app/src/main/java/app/ziziplayer/ui/screens/PinnedCollectionScaffold.kt b/app/src/main/java/app/ziziplayer/ui/screens/PinnedCollectionScaffold.kt
+index 588d222..c5e9835 100644
+--- a/app/src/main/java/app/ziziplayer/ui/screens/PinnedCollectionScaffold.kt
++++ b/app/src/main/java/app/ziziplayer/ui/screens/PinnedCollectionScaffold.kt
+@@ -15,6 +15,7 @@ import androidx.compose.foundation.lazy.LazyColumn
+ import androidx.compose.foundation.lazy.LazyListScope
+ import androidx.compose.foundation.lazy.LazyListState
+ import androidx.compose.foundation.shape.CircleShape
++import androidx.compose.foundation.shape.RoundedCornerShape
+ import androidx.compose.material3.Icon
+ import androidx.compose.material3.Text
+ import androidx.compose.runtime.*
+@@ -86,6 +87,10 @@ internal class CollectionCollapseState(initial: Float = 0f) {
+     }
+ }
+ 
++/** 6.104.0. MORPH — прежняя обложка (сжимается к камере). FIXED_FADE — как в референсе 213113:
++ * обложка не меняет размер, уезжает вместе с шапкой 1:1 и линейно затухает; сверху появляется плашка с названием. */
++internal enum class CollectionCoverMode { MORPH, FIXED_FADE }
++
+ /** Shared by local collections, home mixes and remote albums/playlists; NOT artists.
+  * No timer animates scroll: consumed distance, cover size and pinned controls agree.
+  */
+@@ -105,8 +110,10 @@ internal fun PinnedCollectionScaffold(
+     selectionToolbar: (@Composable () -> Unit)? = null,
+     reorderListState: LazyListState? = null,
+     tools: CollectionTools? = null,
++    coverMode: CollectionCoverMode = CollectionCoverMode.MORPH,
+     collectionRows: LazyListScope.() -> Unit
+ ) {
++    val fixedCover = coverMode == CollectionCoverMode.FIXED_FADE
+     val p = LocalPalette.current
+     val base = Color(0xFF121212)
+     val density = LocalDensity.current
+@@ -173,7 +180,8 @@ internal fun PinnedCollectionScaffold(
+         val metrics = CollectionHeaderMetrics(H.unit(maxWidth.value))
+         val playSize = metrics.touchSize
+         val coverMax = (H.COVER_SIZE * metrics.unit).dp
+-        val coverMin = (coverMax * 0.44f).coerceAtLeast(64.dp).coerceAtMost(coverMax)
++        // FIXED_FADE: min == max, поэтому rangePx == 0 и фаза сжатия (collapseState) не потребляет ни пикселя.
++        val coverMin = if (fixedCover) coverMax else (coverMax * 0.44f).coerceAtLeast(64.dp).coerceAtMost(coverMax)
+         val rangePx = with(density) { (coverMax - coverMin).toPx() }
+         // Full travel was measured as 328px at reference width 1080px. Preserve 48dp targets.
+         val revealRange = (R.REFERENCE_TRAVEL * metrics.unit).dp.coerceAtLeast(toolbar + 48.dp + 4.dp)
+@@ -252,6 +260,10 @@ internal fun PinnedCollectionScaffold(
+         val tail = G.minimumPinnedTail((maxHeight - status).value, minimumRows.value, bottom.value,
+             playSize.value, metrics.bottomGap.value, (toolbar - playSize / 2).value).dp
+         val morphTravelPx = with(density) { (coverMin + (H.COVER_TOP * metrics.unit).dp).toPx() }
++        // Обложка исчезает полностью, когда её нижний край доходит до нижней кромки тулбара.
++        val coverFadeSpanPx = with(density) {
++            ((H.COVER_TOP * metrics.unit).dp + coverMax - toolbar).toPx().coerceAtLeast(1f)
++        }
+         // The lazy hero is absent on a restored deep list. Its missing measurement
+         // must not resurrect the cover, toolbar or unpinned Play button.
+         fun scrollPx(): Float = preciseScroll.visualScroll(list.firstVisibleItemIndex,
+@@ -334,8 +346,13 @@ internal fun PinnedCollectionScaffold(
+                     Spacer(Modifier.height((H.COVER_TOP * metrics.unit).dp))
+                     Box(Modifier.fillMaxWidth().padding(bottom = (H.COVER_TITLE_GAP * metrics.unit).dp), contentAlignment = Alignment.Center) {
+                         val coverSize = M.coverSize(coverMax.value, coverMin.value, collapseState.fraction).dp
+-                        // Measured slot only; the image is composed exactly once in the overlay.
+-                        Box(Modifier.size(coverSize).testTag("collection:cover"))
++                        // MORPH: measured slot only; the image is composed exactly once in the overlay.
++                        // FIXED_FADE: the image lives in the slot, scrolls 1:1 with the list and fades.
++                        Box(Modifier.size(coverSize).testTag("collection:cover")) {
++                            if (fixedCover) Box(Modifier.fillMaxSize()
++                                .clip(RoundedCornerShape((H.COVER_RADIUS * metrics.unit).dp))
++                                .graphicsLayer { alpha = M.fixedCoverAlpha(scrollPx(), coverFadeSpanPx) }) { artwork() }
++                        }
+                     }
+                     CompositionLocalProvider(LocalCollectionHeaderMetrics provides metrics,
+                         LocalCollectionActionsAlpha provides (1f - bannerAlpha)) { hero() }
+@@ -345,7 +362,7 @@ internal fun PinnedCollectionScaffold(
+             item(key = "selection:tail", contentType = "spacer") { Spacer(Modifier.height(if (searching) 0.dp else tail)) }
+         }
+         }
+-        Box(Modifier.fillMaxSize().graphicsLayer { alpha = 1f - searchProgress }) {
++        if (!fixedCover) Box(Modifier.fillMaxSize().graphicsLayer { alpha = 1f - searchProgress }) {
+         CollectionCoverMorphOverlay(
+             camera = camera, maximum = coverMax, minimum = coverMin,
+             coverTop = (H.COVER_TOP * metrics.unit).dp + revealed,
+diff --git a/app/src/main/java/app/ziziplayer/ui/screens/SearchTrackActionsHost.kt b/app/src/main/java/app/ziziplayer/ui/screens/SearchTrackActionsHost.kt
+index 392f7ab..f353506 100644
+--- a/app/src/main/java/app/ziziplayer/ui/screens/SearchTrackActionsHost.kt
++++ b/app/src/main/java/app/ziziplayer/ui/screens/SearchTrackActionsHost.kt
+@@ -28,9 +28,12 @@ internal fun SearchTrackActionsHost(
+     vm: MainViewModel,
+     onDismiss: () -> Unit,
+     onShare: (TrackEntity) -> Unit,
+-    onOpenCollection: (RemoteCollection) -> Unit,
+-    onFindArtist: (String) -> Unit,
+-    onOpenEqualizer: () -> Unit
++    onOpenCollection: ((RemoteCollection) -> Unit)?,
++    onFindArtist: ((String) -> Unit)?,
++    onOpenEqualizer: () -> Unit,
++    /** 6.104.0: пункты контекста (общий плейлист): сверху «Слушать», снизу порядок и «Убрать». */
++    leadingActions: List<SearchTrackAction> = emptyList<SearchTrackAction>(),
++    trailingActions: List<SearchTrackAction> = emptyList<SearchTrackAction>()
+ ) {
+     var playlistTarget by remember { mutableStateOf<TrackEntity?>(null) }
+     var infoTarget by remember { mutableStateOf<TrackEntity?>(null) }
+@@ -54,6 +57,7 @@ internal fun SearchTrackActionsHost(
+                         enabled: Boolean = true, run: (TrackEntity) -> Unit): SearchTrackAction =
+             SearchTrackAction(id, label, icon, enabled) { run(checkNotNull(prepared)) }
+         val actions = buildList {
++            addAll(leadingActions)
+             add(trackAction("share", "Поделиться", ZiziIcons.Share) { track -> onShare(track) })
+             add(trackAction("favorite", if (favorite) "Убрать из избранного" else "Добавить в избранное",
+                 if (favorite) ZiziIcons.HeartFilled else ZiziIcons.Heart) { track -> vm.toggleFavorite(track) })
+@@ -65,10 +69,10 @@ internal fun SearchTrackActionsHost(
+             add(trackAction("playlist", "Добавить в плейлист", ZiziIcons.Plus) { track -> playlistTarget = track })
+             add(trackAction("enqueue", "Добавить в очередь", ZiziIcons.QueueAdd) { track -> vm.addToQueue(track) })
+             add(trackAction("queue", "Очередь", ZiziIcons.Queue) { showQueue = true })
+-            remote.relatedCollection(RemoteKind.ALBUM)?.let { album ->
++            if (onOpenCollection != null) remote.relatedCollection(RemoteKind.ALBUM)?.let { album ->
+                 add(trackAction("album", "Перейти к альбому", ZiziIcons.FolderMusic) { onOpenCollection(album) })
+             }
+-            if (remote.artist.isNotBlank() && remote.artist != "—") {
++            if (remote.artist.isNotBlank() && remote.artist != "—" && onOpenCollection != null && onFindArtist != null) {
+                 val artist = remote.relatedCollection(RemoteKind.ARTIST)
+                 add(trackAction("artist", if (artist != null) "Перейти к исполнителю" else "Найти исполнителя",
+                     ZiziIcons.Person) { if (artist != null) onOpenCollection(artist) else onFindArtist(remote.artist) })
+@@ -85,12 +89,13 @@ internal fun SearchTrackActionsHost(
+             add(trackAction("fx", "Скорость и эффекты", ZiziIcons.Speed) { track -> fxTarget = track })
+             add(trackAction("sleep", "Таймер сна", ZiziIcons.Moon) { showSleep = true })
+             add(trackAction("info", "Сведения о треке", ZiziIcons.Info) { track -> infoTarget = track })
++            addAll(trailingActions)
+         }
+         SearchTrackMenuSheet(track = remote, actions = actions, onDismiss = onDismiss,
+             prepareAction = { action ->
+                 // Await the authoritative row before executing queue/FK-backed operations.
+                 // The existing dialog stays mounted; closing it cancels this preparation.
+-                if (prepared == null) prepared = vm.prepareRemoteTrack(remote)
++                if (!action.local && prepared == null) prepared = vm.prepareRemoteTrack(remote)
+                 action.run
+             })
+     }
+diff --git a/app/src/main/java/app/ziziplayer/ui/screens/SearchTrackMenuSheet.kt b/app/src/main/java/app/ziziplayer/ui/screens/SearchTrackMenuSheet.kt
+index c0078e6..204c999 100644
+--- a/app/src/main/java/app/ziziplayer/ui/screens/SearchTrackMenuSheet.kt
++++ b/app/src/main/java/app/ziziplayer/ui/screens/SearchTrackMenuSheet.kt
+@@ -53,7 +53,10 @@ import kotlinx.coroutines.launch
+ 
+ internal data class SearchTrackAction(
+     val id: String, val label: String, val icon: ImageVector,
+-    val enabled: Boolean = true, val run: () -> Unit
++    val enabled: Boolean = true,
++    /** 6.104.0: действие не трогает библиотеку (двигает/убирает строку общего плейлиста): запись трека в базу не нужна. */
++    val local: Boolean = false,
++    val run: () -> Unit
+ )
+ 
+ /**
+diff --git a/app/src/main/java/app/ziziplayer/ui/screens/SharedLibraryPicker.kt b/app/src/main/java/app/ziziplayer/ui/screens/SharedLibraryPicker.kt
+index 93d2030..04b9062 100644
+--- a/app/src/main/java/app/ziziplayer/ui/screens/SharedLibraryPicker.kt
++++ b/app/src/main/java/app/ziziplayer/ui/screens/SharedLibraryPicker.kt
+@@ -33,7 +33,7 @@ import app.ziziplayer.shared.SharedSearch
+ import app.ziziplayer.shared.buildSharedLibraryIndex
+ import app.ziziplayer.ui.LibraryUiState
+ import app.ziziplayer.ui.MainViewModel
+-import app.ziziplayer.ui.components.RemoteArtwork
++import app.ziziplayer.ui.components.TrackArtwork
+ import app.ziziplayer.ui.components.ZiziIcons
+ import app.ziziplayer.ui.theme.LocalPalette
+ import kotlinx.coroutines.CancellationException
+@@ -227,7 +227,7 @@ private fun SharedLibraryTrackRow(entry: SharedLibraryEntry, note: String, check
+     Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp).clip(RoundedCornerShape(14.dp)).background(tint)
+         .toggleable(value = checked, enabled = enabled, role = Role.Checkbox, onValueChange = { toggle() })
+         .padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+-        RemoteArtwork(entry.track.artworkUri, entry.key, 160, Modifier.size(44.dp).clip(RoundedCornerShape(8.dp)), glyphSize = 18)
++        TrackArtwork(entry.track, 160, Modifier.size(44.dp).clip(RoundedCornerShape(8.dp)), glyphSize = 18)
+         Spacer(Modifier.width(12.dp))
+         Column(Modifier.weight(1f)) {
+             Text(entry.track.title, color = if (enabled) p.text else p.subtext, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)

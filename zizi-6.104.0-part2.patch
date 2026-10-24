@@ -1,0 +1,382 @@
+diff --git a/app/src/main/java/app/ziziplayer/ui/screens/SharedScreens.kt b/app/src/main/java/app/ziziplayer/ui/screens/SharedScreens.kt
+index c0fc88b..f218b72 100644
+--- a/app/src/main/java/app/ziziplayer/ui/screens/SharedScreens.kt
++++ b/app/src/main/java/app/ziziplayer/ui/screens/SharedScreens.kt
+@@ -11,6 +11,13 @@ import androidx.compose.foundation.border
+ import androidx.compose.foundation.clickable
+ import androidx.compose.foundation.layout.*
+ import androidx.compose.foundation.lazy.LazyColumn
++import androidx.compose.foundation.lazy.LazyListState
++import androidx.compose.ui.graphics.toArgb
++import app.ziziplayer.ui.CollectionSearchPolicy
++import app.ziziplayer.ui.CollectionViewSort
++import app.ziziplayer.ui.components.COLLECTION_COVER_FADE_MS
++import app.ziziplayer.ui.components.rememberUrlArtwork
++import app.ziziplayer.ui.theme.ArtworkTopMath
+ import androidx.compose.foundation.lazy.itemsIndexed
+ import androidx.compose.foundation.lazy.items
+ import androidx.compose.foundation.shape.CircleShape
+@@ -133,12 +140,22 @@ private fun SharedCover(arts: List<String>, seed: String, size: Dp) {
+     val p = LocalPalette.current
+     val shape = RoundedCornerShape(size / 8)
+     Box(Modifier.size(size).clip(shape).background(p.chip), contentAlignment = Alignment.Center) {
++        if (arts.isEmpty()) Icon(ZiziIcons.Queue, null, tint = p.subtext, modifier = Modifier.size(size / 2.6f))
++        else SharedMosaic(arts, seed, Modifier.fillMaxSize())
++    }
++}
++
++/** Обложка общего плейлиста: пока < 4 разных обложек — одна, дальше квадраты 2x2. Скругление и фон задаёт вызывающий. */
++@Composable
++private fun SharedMosaic(arts: List<String>, seed: String, modifier: Modifier = Modifier) {
++    val p = LocalPalette.current
++    Box(modifier.background(p.chip), contentAlignment = Alignment.Center) {
+         when {
+-            arts.isEmpty() -> Icon(ZiziIcons.Queue, null, tint = p.subtext, modifier = Modifier.size(size / 2.6f))
+-            arts.size < 4 -> RemoteArtwork(arts.first(), seed, 512, Modifier.fillMaxSize())
++            arts.isEmpty() -> Icon(ZiziIcons.Queue, null, tint = p.subtext, modifier = Modifier.fillMaxSize(0.38f))
++            arts.size < 4 -> RemoteArtwork(arts.first(), seed, SHARED_COVER_PX, Modifier.fillMaxSize())
+             else -> Column(Modifier.fillMaxSize()) {
+                 for (r in 0..1) Row(Modifier.weight(1f)) {
+-                    for (c in 0..1) RemoteArtwork(arts[r * 2 + c], seed + r + c, 256, Modifier.weight(1f).fillMaxHeight(), glyphSize = 18)
++                    for (c in 0..1) RemoteArtwork(arts[r * 2 + c], seed + r + c, SHARED_TILE_PX, Modifier.weight(1f).fillMaxHeight(), glyphSize = 18)
+                 }
+             }
+         }
+@@ -186,7 +203,9 @@ internal fun SharedHost(
+      * пересоздания Activity), как состояние пропадало и человек попадал на хаб, а то и на главную.
+      */
+     openPid: String?,
+-    onOpenPid: (String?) -> Unit
++    onOpenPid: (String?) -> Unit,
++    onShare: (TrackEntity) -> Unit,
++    onOpenEqualizer: () -> Unit
+ ) {
+     val context = LocalContext.current
+     val repo = remember { SharedRepository.get(context) }
+@@ -227,7 +246,8 @@ internal fun SharedHost(
+     Box(Modifier.fillMaxSize().background(p.surface)) {
+         val pid = openPid
+         if (pid == null) SharedHubList(repo, onBack = onClose, onOpen = { onOpenPid(it) }, onCreate = { createFrom = null; creating = true })
+-        else SharedPlaylistScreen(vm, state, repo, uid, pid, onBack = { onOpenPid(null) }, toast = { toast = it })
++        else SharedPlaylistScreen(vm, state, repo, uid, pid, onBack = { onOpenPid(null) }, toast = { toast = it },
++            onShare = onShare, onOpenEqualizer = onOpenEqualizer)
+ 
+         toast?.let { msg ->
+             Box(Modifier.align(Alignment.BottomCenter).padding(bottom = LocalBottomChromeInset.current + 24.dp, start = 24.dp, end = 24.dp)
+@@ -339,10 +359,47 @@ private fun SharedHubRow(repo: SharedRepository, row: SharedPlaylistRow, modifie
+ 
+ // =============================================================================== плейлист
+ 
++/** 6.104.0. Вид плейлиста: источник, запрос, сортировка и фильтр «мои» привязаны к результату, чтобы очередь и строки не расходились. */
++private data class SharedView(
++    val query: String, val sort: CollectionViewSort, val mine: Boolean,
++    val source: List<SharedTrack>, val rows: List<Pair<Int, SharedTrack>>
++)
++
++/**
++ * 6.104.0. Цвет шапки по обложке. Одна обложка — её собственный tint, как у всех коллекций.
++ * Мозаика 2x2 (>= 4 обложек) — взвешенный по четырём плиткам ArtworkTopMath.mosaicCollectionTop:
++ * верхний ряд весит больше (он граничит с градиентом), цветные плитки перевешивают серые,
++ * противоположные оттенки не смешиваются в грязно-серый. Плитки берутся из того же кэша, что и сама обложка.
++ */
++@Composable
++private fun rememberSharedTint(arts: List<String>): Color {
++    val px = if (arts.size >= 4) SHARED_TILE_PX else SHARED_COVER_PX
++    val a0 = rememberUrlArtwork(arts.getOrNull(0), px)
++    val a1 = rememberUrlArtwork(arts.getOrNull(1), px)
++    val a2 = rememberUrlArtwork(arts.getOrNull(2), px)
++    val a3 = rememberUrlArtwork(arts.getOrNull(3), px)
++    val target = remember(arts.size, a0, a1, a2, a3) {
++        when {
++            arts.size >= 4 -> {
++                val tops = listOf(a0, a1, a2, a3).map { it?.swatches?.top?.toArgb() ?: 0 }.toIntArray()
++                if (tops.all { it == 0 }) Color(0xFF292929) else Color(ArtworkTopMath.mosaicCollectionTop(tops))
++            }
++            arts.isEmpty() -> Color(0xFF292929)
++            else -> a0?.swatches?.collectionTint ?: Color(0xFF292929)
++        }
++    }
++    val tint by animateColorAsState(target, tween(COLLECTION_COVER_FADE_MS), label = "shared-tint")
++    return tint
++}
++
++private const val SHARED_COVER_PX = 640
++private const val SHARED_TILE_PX = 384
++
+ @Composable
+ private fun SharedPlaylistScreen(
+     vm: MainViewModel, state: LibraryUiState, repo: SharedRepository, uid: String, pid: String,
+-    onBack: () -> Unit, toast: (String) -> Unit
++    onBack: () -> Unit, toast: (String) -> Unit,
++    onShare: (TrackEntity) -> Unit, onOpenEqualizer: () -> Unit
+ ) {
+     val p = LocalPalette.current
+     val context = LocalContext.current
+@@ -360,27 +417,43 @@ private fun SharedPlaylistScreen(
+     var trackMenu by remember(pid) { mutableStateOf<SharedTrack?>(null) }
+     var confirm by rememberSaveable(pid) { mutableStateOf<String?>(null) }
+     var busy by remember { mutableStateOf(false) }
+-    val bottom = LocalBottomChromeInset.current
++    // Поиск и сортировка — та же механика, что у «Все треки», «Избранное» и плейлистов (PinnedCollectionScaffold + CollectionTools).
++    var searchOpen by rememberSaveable(pid) { mutableStateOf(false) }
+     var query by rememberSaveable(pid) { mutableStateOf("") }
++    var sort by rememberSaveable(pid) { mutableStateOf(CollectionViewSort.ORIGINAL) }
++    var sortSheet by remember(pid) { mutableStateOf(false) }
+     var onlyMine by rememberSaveable(pid) { mutableStateOf(false) }
++    val list = rememberSaveable(pid, saver = LazyListState.Saver) { LazyListState() }
++    val animateSearchRows = searchOpen && !list.isScrollInProgress
+     val searchKeys by produceState<Map<String, String>>(emptyMap(), tracks) {
+         value = withContext(Dispatchers.Default) {
+             tracks.associate { it.id to SharedSearch.key(it.meta.title, it.meta.artist, it.meta.album) }
+         }
+     }
+-    val shown by produceState<List<Pair<Int, SharedTrack>>>(emptyList(), tracks, searchKeys, query, onlyMine, uid) {
++    val view by produceState(SharedView("", sort, false, emptyList(), emptyList()),
++        tracks, searchKeys, query, sort, onlyMine, uid) {
+         val activeQuery = query
++        val activeSort = sort
+         val mine = onlyMine
+         if (activeQuery.isNotBlank()) delay(140)
+         value = withContext(Dispatchers.Default) {
+             val terms = SharedSearch.terms(SharedSearch.normalize(activeQuery))
+-            tracks.mapIndexedNotNull { index, track ->
+-                if ((!mine || track.addedBy == uid) && SharedSearch.matches(
+-                        searchKeys[track.id].orEmpty(), terms)) index to track
++            val matched = tracks.mapIndexedNotNull { index, track ->
++                if ((!mine || track.addedBy == uid) && SharedSearch.matches(searchKeys[track.id].orEmpty(), terms)) index to track
+                 else null
+             }
++            // Сортировка общая для всех коллекций; ORIGINAL — порядок общего плейлиста (новые сверху).
++            val ordered = CollectionSearchPolicy.filterAndSort(
++                matched.mapIndexed { i, (_, t) ->
++                    CollectionSearchPolicy.Entry(i, t.meta.title, t.meta.artist, t.meta.durationMs)
++                }, "", CollectionSearchPolicy.Order.valueOf(activeSort.name))
++            SharedView(activeQuery, activeSort, mine, tracks, ordered.map { matched[it.sourceIndex] })
+         }
+     }
++    val ready = view.source === tracks && view.query == query && view.sort == sort && view.mine == onlyMine
++    val rows = view.rows
++    val arts = remember(tracks) { tracks.asSequence().mapNotNull { it.meta.artwork }.distinct().take(4).toList() }
++    val tint = rememberSharedTint(arts)
+     val current = loaded?.firstOrNull()
+     if (current == null) {
+         // Плейлист исчез (удалён владельцем, нас исключили): назад в хаб, сообщение уже показано репозиторием.
+@@ -390,15 +463,13 @@ private fun SharedPlaylistScreen(
+     }
+     val role = current.role
+     val names = remember(members) { members.associate { it.uid to it.name } }
+-    val arts = remember(tracks) { tracks.asSequence().mapNotNull { it.meta.artwork }.distinct().take(4).toList() }
+-    fun play(index: Int, shuffle: Boolean = false) {
+-        // Индекс считаем по тем трекам, что реально играют: если у одного нет валидной ссылки, прежний
+-        // `index` в списке экрана и в очереди плеера расходился, и играл сосед нажатой строки.
+-        val playable = tracks.mapIndexedNotNull { i, t -> SharedRefs.toRemote(t.ref, t.meta)?.let { i to it } }
++    /** Очередь — ровно то, что показано (после поиска/сортировки). Индекс считаем по реально играющим трекам. */
++    fun playRows(start: Int, shuffle: Boolean = false) {
++        val playable = rows.mapIndexedNotNull { i, (_, t) -> SharedRefs.toRemote(t.ref, t.meta)?.let { i to it } }
+         if (playable.isEmpty()) return
+         val remotes = playable.map { it.second }
+         if (shuffle) vm.playRemote(remotes.shuffled(), 0)
+-        else vm.playRemote(remotes, playable.indexOfFirst { it.first >= index }.let { if (it < 0) remotes.lastIndex else it })
++        else vm.playRemote(remotes, playable.indexOfFirst { it.first >= start }.let { if (it < 0) remotes.lastIndex else it })
+     }
+     fun launchBusy(action: suspend () -> Unit) {
+         if (busy) return
+@@ -407,77 +478,61 @@ private fun SharedPlaylistScreen(
+             try { action() } catch (e: CancellationException) { throw e } catch (e: Exception) { toast(sharedError(e)) } finally { busy = false }
+         }
+     }
++    val unfiltered = sort == CollectionViewSort.ORIGINAL && query.isBlank() && !onlyMine
+ 
+-    LazyColumn(Modifier.fillMaxSize().statusBarsPadding(), contentPadding = PaddingValues(bottom = bottom + 110.dp)) {
+-        item(key = "top") {
+-            Row(verticalAlignment = Alignment.CenterVertically) {
+-                IconButton(onClick = onBack, modifier = Modifier.padding(start = 6.dp)) { Icon(ZiziIcons.ArrowBack, "Назад", tint = p.text) }
+-                Spacer(Modifier.weight(1f))
+-                IconButton(onClick = { sheet = "more" }, modifier = Modifier.padding(end = 6.dp)) { Icon(ZiziIcons.More, "Ещё", tint = p.text) }
+-            }
+-        }
+-        item(key = "head") {
+-            Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+-                SharedCover(arts, pid, 176.dp)
+-                Spacer(Modifier.height(14.dp))
+-                Text(current.title, color = p.text, fontSize = 24.sp, fontFamily = ZiziTitleFont, fontWeight = FontWeight.ExtraBold,
+-                    maxLines = 2, overflow = TextOverflow.Ellipsis)
+-                Text("Общий · ${tracksLabel(tracks.size)} · ${roleLabel(role)}", color = p.subtext, fontSize = 13.sp)
+-                Spacer(Modifier.height(8.dp))
+-                MemberAvatars(members, avatars) { sheet = "members" }
+-                Spacer(Modifier.height(16.dp))
+-                // Одна панель: все элементы одного роста (48 dp), одинаковый шаг, «Слушать» забирает остаток ширины,
+-                // а на широких экранах панель не растягивается дальше 420 dp и остаётся по центру.
+-                Column(Modifier.widthIn(max = 420.dp).fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+-                    ControlPlayPill("Слушать", enabled = tracks.isNotEmpty(), modifier = Modifier.fillMaxWidth()) { play(0) }
+-                    Spacer(Modifier.height(12.dp))
+-                    Row(horizontalArrangement = Arrangement.spacedBy(18.dp), verticalAlignment = Alignment.CenterVertically) {
+-                        ControlCircleButton(ZiziIcons.Shuffle, "Перемешать", enabled = tracks.isNotEmpty()) { play(0, shuffle = true) }
+-                        if (role != ROLE_VIEWER) ControlCircleButton(ZiziIcons.Plus, "Добавить треки из всей вашей музыки") { sheet = "add" }
+-                        if (role == ROLE_OWNER) ControlCircleButton(ZiziIcons.Link, "Пригласить друзей") { sheet = "invite" }
+-                        ControlCircleButton(ZiziIcons.History, "Лента изменений") { sheet = "activity" }
++    PinnedCollectionScaffold(
++        destination = "shared:$pid", title = current.title, tint = tint, trackCount = rows.size,
++        playingHere = false, playEnabled = ready && rows.isNotEmpty(),
++        onBack = onBack, onPlay = { if (ready) playRows(0) },
++        artwork = { SharedMosaic(arts, pid, Modifier.fillMaxSize()) },
++        reorderListState = list,
++        coverMode = CollectionCoverMode.FIXED_FADE,
++        tools = CollectionTools(searchOpen, query, "Поиск в плейлисте",
++            onSearch = { searchOpen = true }, onQuery = { query = it },
++            onCloseSearch = { searchOpen = false; query = "" }, onSort = { sortSheet = true }),
++        hero = {
++            CollectionHeroContent(
++                title = current.title,
++                metadata = "Общий · ${tracksLabel(tracks.size)} · ${membersLabel(members.size)} · ${roleLabel(role)}") {
++                val m = LocalCollectionHeaderMetrics.current
++                val on = LocalCollectionActionsAlpha.current > 0f
++                CollectionActionsRow(onShuffle = { if (ready) playRows(0, shuffle = true) },
++                    shuffleEnabled = ready && rows.isNotEmpty(),
++                    shuffleDescription = "Перемешать показанные треки",
++                    onMenu = { sheet = "more" }) {
++                    Box(Modifier.height(m.touchSize), contentAlignment = Alignment.Center) {
++                        MemberAvatars(members, avatars) { if (on) sheet = "members" }
+                     }
+-                    Text(membersLabel(members.size) + " · открыть участников", color = p.subtext, fontSize = 12.sp,
+-                        modifier = Modifier.clip(RoundedCornerShape(12.dp)).clickable { sheet = "members" }.padding(12.dp))
++                    if (role != ROLE_VIEWER) IconButton(onClick = { sheet = "add" }, enabled = on,
++                        modifier = Modifier.size(m.touchSize)) { Icon(ZiziIcons.Plus, "Добавить треки", tint = p.subtext) }
++                    if (role == ROLE_OWNER) IconButton(onClick = { sheet = "invite" }, enabled = on,
++                        modifier = Modifier.size(m.touchSize)) { Icon(ZiziIcons.Link, "Пригласить друзей", tint = p.subtext) }
++                    IconButton(onClick = { sheet = "activity" }, enabled = on,
++                        modifier = Modifier.size(m.touchSize)) { Icon(ZiziIcons.History, "Лента изменений", tint = p.subtext) }
++                    if (onlyMine || tracks.any { it.addedBy == uid }) ChoiceChip(
++                        if (onlyMine) "Мои треки" else "Все треки", onlyMine, enabled = on) { onlyMine = !onlyMine }
+                 }
+-                Spacer(Modifier.height(10.dp))
+             }
+         }
++    ) {
+         if (tracks.isEmpty()) item(key = "empty") {
+             Text(if (role == ROLE_VIEWER) "Здесь пока пусто." else "Здесь пока пусто. Добавьте первые треки кнопкой «+» или из меню любого трека.",
+                 color = p.subtext, modifier = Modifier.padding(horizontal = 24.dp, vertical = 20.dp))
+         }
+-        if (tracks.isNotEmpty()) {
+-            item(key = "search") {
+-                SoftTextField(query, { query = it }, "Найти в этом плейлисте", leadingIcon = ZiziIcons.Search,
+-                    imeAction = ImeAction.Search, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+-            }
+-            item(key = "filters") {
+-                androidx.compose.foundation.lazy.LazyRow(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
+-                    horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+-                    item { ChoiceChip("Все треки", !onlyMine) { onlyMine = false } }
+-                    item { ChoiceChip("Мои треки", onlyMine) { onlyMine = true } }
+-                }
+-            }
+-            if (shown.isEmpty()) item(key = "not-found") {
+-                Text(if (onlyMine && query.isBlank()) {
+-                    if (role == ROLE_VIEWER) "Здесь пока нет добавленных вами треков." else "Добавьте свою первую находку кнопкой «+»."
+-                } else "По этому запросу ничего не найдено.",
+-                    color = p.subtext, modifier = Modifier.padding(22.dp))
+-            }
+-        }
+-        itemsIndexed(shown, key = { _, entry -> entry.second.id }, contentType = { _, _ -> "shared-track" }) { _, entry ->
+-            val (index, t) = entry
++        itemsIndexed(rows, key = { _, entry -> entry.second.id }, contentType = { _, _ -> "shared-track" }) { rowIndex, entry ->
++            val t = entry.second
+             Row(
+                 Modifier
+                     .animateItem(
+-                        // Пока идёт стартовая лесенка, плавность даёт introFade; потом новые строки
+-                        // (друг добавил трек) мягко проявляются, а перестановки плавно едут.
+-                        fadeInSpec = if (intro) null else tween(240), fadeOutSpec = tween(160),
+-                        placementSpec = spring(stiffness = Spring.StiffnessMediumLow)
++                        // Стартовая лесенка даёт introFade; потом новые строки (свои и чужие) мягко проявляются
++                        // сверху, а соседние плавно съезжают вниз.
++                        fadeInSpec = if (intro && !animateSearchRows) null else if (animateSearchRows) collectionRowFadeIn else tween(240),
++                        fadeOutSpec = if (animateSearchRows) collectionRowFadeOut else tween(160),
++                        placementSpec = if (animateSearchRows) spring(dampingRatio = 1f, stiffness = 600f)
++                            else spring(stiffness = Spring.StiffnessMediumLow)
+                     )
+-                    .introFade(index, intro)
+-                    .fillMaxWidth().clickable { play(index) }
++                    .introFade(rowIndex, intro)
++                    .fillMaxWidth().clickable { if (ready) playRows(rowIndex) }
+                     .padding(start = 16.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+                 verticalAlignment = Alignment.CenterVertically
+             ) {
+@@ -498,28 +553,64 @@ private fun SharedPlaylistScreen(
+                 IconButton(onClick = { trackMenu = t }) { Icon(ZiziIcons.More, "Действия", tint = p.subtext) }
+             }
+         }
++        if (tracks.isNotEmpty() && ready && rows.isEmpty()) item(key = "not-found") {
++            when {
++                query.isNotBlank() -> CollectionSearchEmpty(query)
++                onlyMine -> Text(if (role == ROLE_VIEWER) "Здесь пока нет добавленных вами треков." else "Добавьте свою первую находку кнопкой «+».",
++                    color = p.subtext, modifier = Modifier.padding(22.dp))
++            }
++        }
+     }
+ 
+-    trackMenu?.let { t ->
+-        val index = tracks.indexOfFirst { it.id == t.id }
+-        ZiziSheetScaffold(onDismiss = { trackMenu = null }) {
+-            SheetTitle(t.meta.title, t.meta.artist.ifBlank { null })
+-            MenuItem(ZiziIcons.Play, "Слушать") { trackMenu = null; if (index >= 0) play(index) }
+-            if (role != ROLE_VIEWER && index >= 0 && tracks.size > 1) {
+-                if (index > 0) {
+-                    MenuItem(ZiziIcons.ChevronUp, "Выше") { trackMenu = null; launchBusy { repo.move(uid, pid, t.id, index - 1) } }
+-                    MenuItem(ZiziIcons.ChevronUp, "В начало") { trackMenu = null; launchBusy { repo.move(uid, pid, t.id, 0) } }
++    // Меню трека — полный набор Zizi (очередь, избранное, плейлисты, скачивание, FX, таймер, сведения, «поделиться»)
++    // плюс действия общего плейлиста. Хост всегда в композиции: его вложенные окна (выбор плейлиста, очередь) переживают закрытие меню.
++    val menuTrack = trackMenu
++    val menuRemote = remember(menuTrack?.id) { menuTrack?.let { SharedRefs.toRemote(it.ref, it.meta) } }
++    val menuIndex = menuTrack?.let { t -> tracks.indexOfFirst { it.id == t.id } } ?: -1
++    val canArrange = role != ROLE_VIEWER && unfiltered && menuIndex >= 0 && tracks.size > 1
++    val leading = remember(menuTrack?.id, rows) {
++        val t = menuTrack
++        if (t == null) emptyList<SearchTrackAction>() else listOf(SearchTrackAction("shared-play", "Слушать", ZiziIcons.Play, local = true) {
++            val at = rows.indexOfFirst { it.second.id == t.id }
++            if (at >= 0) playRows(at)
++        })
++    }
++    val trailing: List<SearchTrackAction> = run {
++        val t = menuTrack
++        if (t == null) emptyList<SearchTrackAction>() else buildList<SearchTrackAction> {
++            val who = if (t.addedBy == uid) "вы" else names[t.addedBy]?.ifBlank { null } ?: "участник"
++            add(SearchTrackAction("shared-by", "Добавил(а): $who · ${ago(t.addedAt)}", ZiziIcons.Person, local = true) {
++                toast("Добавил(а): $who · ${ago(t.addedAt)}")
++            })
++            if (canArrange) {
++                if (menuIndex > 0) {
++                    add(SearchTrackAction("shared-top", "В начало плейлиста", ZiziIcons.ChevronUp, local = true) { launchBusy { repo.move(uid, pid, t.id, 0) } })
++                    add(SearchTrackAction("shared-up", "Выше", ZiziIcons.ChevronUp, local = true) { launchBusy { repo.move(uid, pid, t.id, menuIndex - 1) } })
+                 }
+-                if (index < tracks.lastIndex) {
+-                    MenuItem(ZiziIcons.ChevronDown, "Ниже") { trackMenu = null; launchBusy { repo.move(uid, pid, t.id, index + 1) } }
+-                    MenuItem(ZiziIcons.ChevronDown, "В конец") { trackMenu = null; launchBusy { repo.move(uid, pid, t.id, tracks.size - 1) } }
++                if (menuIndex < tracks.lastIndex) {
++                    add(SearchTrackAction("shared-down", "Ниже", ZiziIcons.ChevronDown, local = true) { launchBusy { repo.move(uid, pid, t.id, menuIndex + 1) } })
++                    add(SearchTrackAction("shared-bottom", "В конец плейлиста", ZiziIcons.ChevronDown, local = true) { launchBusy { repo.move(uid, pid, t.id, tracks.lastIndex) } })
+                 }
+             }
+-            if (repo.canRemove(uid, role, t)) MenuItem(ZiziIcons.Trash, "Убрать из общего плейлиста", danger = true) {
+-                trackMenu = null; launchBusy { repo.remove(uid, pid, t.id) }
++            if (repo.canRemove(uid, role, t)) add(SearchTrackAction("shared-remove", "Убрать из общего плейлиста", ZiziIcons.Trash, local = true) {
++                launchBusy { repo.remove(uid, pid, t.id) }
++            })
++        }
++    }
++    SearchTrackActionsHost(remote = menuRemote, vm = vm, onDismiss = { trackMenu = null },
++        onShare = onShare, onOpenCollection = null, onFindArtist = null, onOpenEqualizer = onOpenEqualizer,
++        leadingActions = leading, trailingActions = trailing)
++    // Трек без валидной ссылки в полный набор не входит: оставляем короткое меню, чтобы его можно было убрать.
++    if (menuTrack != null && menuRemote == null) {
++        ZiziSheetScaffold(onDismiss = { trackMenu = null }) {
++            SheetTitle(menuTrack.meta.title, menuTrack.meta.artist.ifBlank { null })
++            if (repo.canRemove(uid, role, menuTrack)) MenuItem(ZiziIcons.Trash, "Убрать из общего плейлиста", danger = true) {
++                trackMenu = null; launchBusy { repo.remove(uid, pid, menuTrack.id) }
+             }
+         }
+     }
++    if (sortSheet) CollectionViewSortSheet(sort, "Порядок плейлиста (новые сверху)",
++        onChoose = { sort = it }, onDismiss = { sortSheet = false })
+ 
+     when (sheet) {
+         "more" -> ZiziSheetScaffold(onDismiss = { sheet = null }) {
