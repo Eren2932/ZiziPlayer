@@ -20,7 +20,9 @@ on:
     branches: [main, master]
     # Android updates remain ZIP-based. Desktop/docs-only pushes do not build APK.
     paths:
+      # Support both historical v-prefixed archives and 6.100.2+ names without v.
       - 'ZiziPlayer-v*.zip'
+      - 'ZiziPlayer-[0-9]*.zip'
       - '.github/workflows/build.yml'
     tags: ['v[0-9]*']
   release:
@@ -427,6 +429,13 @@ jobs:
         working-directory: ${{ env.PROJECT_ROOT }}
         run: python3 tools/check_static_refs.py app/src/main
 
+      # 6.84.14-rc2. `app.ziziplayer.X` рядом с переменной `app` (поле или локальная) компилятор читает как член
+      # переменной: Unresolved reference 'ziziplayer'. Так упал 6.84.14-rc1. Валит сборку: ложных срабатываний
+      # на текущем коде нет.
+      - name: Затенение пакета app
+        working-directory: ${{ env.PROJECT_ROOT }}
+        run: python3 tools/check_package_shadow.py app/src/main app/src/test
+
       # 6.27.2: третья проверка того же сорта. Утопила 6.27.1 хвостовая лямбда, севшая на
       # modifier вместо onClick, — синтаксис цел, ссылки живые, обе прежние проверки молчали.
       # Проверка эвристическая и сборку не роняет: она печатает подозрения в лог шага.
@@ -461,6 +470,9 @@ jobs:
         working-directory: ${{ env.PROJECT_ROOT }}
         run: python3 server/tools/check_py_syntax.py server
 
+      - name: ffmpeg for the WebM to Ogg container test
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+
       - name: Stage 2 regression and diagnostic probe tests (offline)
         working-directory: ${{ env.PROJECT_ROOT }}
         run: |
@@ -483,6 +495,10 @@ jobs:
           python3 server/tools/test_version_family.py
           python3 tools/test_queue_6660_contracts.py
           python3 tools/test_release_6680.py
+          # 6.96.1: WebM/Opus -> Ogg Opus, аудио MIME при «Файлом». Часть с ffmpeg пропускается, если его нет.
+          python3 tools/test_audio_container_6961.py
+          # 6.96.1: названия из одиночных букв («N.O») не должны давать пустой запрос подбора (404).
+          python3 tools/test_match_letters_6961.py
 
       - name: Validate optional lyrics server configuration
         env:
@@ -514,6 +530,19 @@ jobs:
       - name: Lyrics server unit tests (no network or audio)
         working-directory: ${{ env.PROJECT_ROOT }}
         run: python3 -m unittest discover -s lyrics_server/tests -v
+
+      # 7.1.0: демон чата (stdlib, без сети: интеграция идёт по сокетам на 127.0.0.1) и сервер аккаунтов вместе с маршрутом тикета.
+      - name: Chat server unit and socket tests
+        working-directory: ${{ env.PROJECT_ROOT }}
+        run: python3 -m unittest discover -s chat_server/tests -v
+
+      - name: Accounts server tests (incl. chat ticket)
+        working-directory: ${{ env.PROJECT_ROOT }}
+        run: |
+          # venv: на ubuntu-24.04 pip в системный Python запрещён (PEP 668).
+          python3 -m venv "$RUNNER_TEMP/accounts-venv"
+          "$RUNNER_TEMP/accounts-venv/bin/pip" install --quiet -r accounts_server/requirements.txt
+          "$RUNNER_TEMP/accounts-venv/bin/python" -m unittest discover -s accounts_server/tests
 
       - name: Cloud library decision policy
         working-directory: ${{ env.PROJECT_ROOT }}
